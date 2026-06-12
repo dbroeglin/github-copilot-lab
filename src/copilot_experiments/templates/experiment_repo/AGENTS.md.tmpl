@@ -1,0 +1,33 @@
+# AGENTS.md — {{project_title}}
+
+This repository contains **GitHub Copilot research experiments** built with the
+`copilot-experiments` library and CLI.
+
+## What lives where
+- `experiments/*.py` — experiment definitions. Each exposes an `Experiment` (variable
+  `experiment`, an `experiments` list, or a `get_experiments()` function).
+- `fixtures/<name>/` — a starting workspace copied fresh for every trial.
+- `results/` — generated artifacts and the SQLite index. **Never edit by hand**; it is
+  regenerable via `copilot-experiments reindex`.
+- `.apm/` — APM-managed agent context (instructions, skills, prompts).
+
+## Authoring an experiment
+1. Add a fixture under `fixtures/` (a self-contained workspace).
+2. Create `experiments/<name>.py` defining a `Task` (prompt, `fixture`, optional `setup`
+   and `verify`) and a list of `Variant`s (model / reasoning_effort / agent / BYOK matrix).
+3. Validate with a dry-run: `uv run copilot-experiments run --dry-run`.
+
+## Conventions
+- Keep prompts and fixtures deterministic and self-contained.
+- Prefer a `verify` command that exits non-zero on failure so effectiveness is measured.
+- Use multiple `trials` per variant when you need statistical robustness.
+- Do not commit `results/` (it is gitignored).
+
+## Commands
+```bash
+uv sync
+uv run copilot-experiments run [--dry-run]
+uv run copilot-experiments list
+uv run copilot-experiments show --last
+uv run copilot-experiments inspect <run-id> --variant <slug> --trial <n>
+```

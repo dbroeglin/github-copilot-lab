@@ -1,0 +1,16 @@
+name: copilot-experiments
+version: 0.1.0
+description: >-
+  Library + CLI for building GitHub Copilot research experiments and collecting
+  results. This APM manifest provides agent context for developing the library
+  itself (not for authoring experiments — that context is generated into
+  scaffolded experiment repos by `copilot-experiments init`).
+
+dependencies:
+  apm:
+    # Reusable agent context can be added here, e.g.:
+    # - github/awesome-copilot/agents/python-expert.agent.md
+  mcp:
+    # MCP servers installed into every detected client, e.g.:
+    # - name: io.github.github/github-mcp-server
+    #   transport: http
