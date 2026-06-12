@@ -1,0 +1,16 @@
+[project]
+name = "{{project_name}}"
+version = "0.1.0"
+description = "GitHub Copilot research experiments."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    # The experiment harness. Until published to PyPI, install from git (or replace
+    # with a local editable path: `copilot-experiments @ file:///path/to/repo`).
+    "copilot-experiments @ git+https://github.com/dbroeglin/github-copilot-lab.git",
+    # Used by the example experiment's `verify` command.
+    "pytest>=8.0",
+]
+
+[tool.copilot-experiments]
+# Marker so tooling can recognize this as an experiment repository.

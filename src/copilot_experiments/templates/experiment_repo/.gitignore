@@ -1,0 +1,12 @@
+# Generated / regenerable
+results/
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# APM
+apm_modules/
+apm.lock.yaml
+.github/copilot-instructions.md

@@ -1,0 +1,28 @@
+# Python / uv
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Experiment results (filesystem artifacts + SQLite index are regenerable)
+results/
+
+# Local scratch area for testing the lib/CLI
+sandbox/*
+!sandbox/.gitkeep
+!sandbox/README.md
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# APM
+apm_modules/
+apm.lock.yaml
