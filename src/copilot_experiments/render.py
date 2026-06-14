@@ -7,6 +7,7 @@ serialized, rendered in the terminal here, or served by a future web explorer.
 from __future__ import annotations
 
 import datetime as _dt
+import json
 
 from rich.columns import Columns
 from rich.console import Console
@@ -146,3 +147,98 @@ def render_session_analysis(
         body = "\n".join(f"\u2022 {w}" for w in analysis.warnings)
         console.print(Panel(body, title="[bold]Warnings[/bold]", border_style="yellow",
                             expand=False))
+
+
+# --------------------------------------------------------------------------- #
+# Live (per-event) formatting for `run --verbose`
+# --------------------------------------------------------------------------- #
+class LiveEventFormatter:
+    """Turn Copilot's ``--output-format json`` event stream into concise, ASCII-safe lines.
+
+    Stateful, so it can correlate a tool completion back to its start (``toolCallId`` ->
+    ``toolName``) and number assistant turns. Returns ``None`` for noisy/ephemeral events
+    that aren't worth showing live, and falls back to the raw (trimmed) text for anything
+    that isn't a JSON event object -- the user always sees *something*.
+
+    ASCII markers (not unicode glyphs) keep output readable on Windows consoles.
+    """
+
+    def __init__(self, *, preview_len: int = 80) -> None:
+        self._preview_len = preview_len
+        self._tool_names: dict[str, str] = {}
+        self._turn = 0
+
+    def format(self, line: str) -> str | None:
+        raw = line.strip()
+        if not raw:
+            return None
+        try:
+            ev = json.loads(raw)
+        except (ValueError, TypeError):
+            return raw  # not JSON -> show the raw line
+        if not isinstance(ev, dict):
+            return raw
+        etype = str(ev.get("type", ""))
+        data = ev.get("data") or {}
+        if not isinstance(data, dict):
+            data = {}
+        return self._format_event(etype, data)
+
+    def _trim(self, text: object) -> str:
+        if not isinstance(text, str):
+            return ""
+        flat = " ".join(text.split())
+        if len(flat) <= self._preview_len:
+            return flat
+        return flat[: self._preview_len - 1] + "\u2026"
+
+    def _format_event(self, etype: str, data: dict) -> str | None:
+        if etype == "session.start":
+            model = data.get("selectedModel") or "?"
+            effort = data.get("reasoningEffort")
+            tail = f" effort={effort}" if effort else ""
+            return f"[session] start model={model}{tail}"
+
+        if etype == "user.message":
+            return f"[user] {self._trim(data.get('content'))}"
+
+        if etype == "assistant.turn_start":
+            self._turn += 1
+            return f"[turn {self._turn}] start"
+
+        if etype == "assistant.message":
+            preview = self._trim(data.get("content"))
+            out = data.get("outputTokens")
+            suffix = f" ({out} tok)" if isinstance(out, int) else ""
+            if not preview and not suffix:
+                return None
+            return f"[asst] {preview}{suffix}"
+
+        if etype == "tool.execution_start":
+            name = data.get("toolName") or "unknown"
+            call_id = data.get("toolCallId")
+            if isinstance(call_id, str):
+                self._tool_names[call_id] = name
+            return f"[tool] {name} start"
+
+        if etype == "tool.execution_complete":
+            call_id = data.get("toolCallId")
+            name = "unknown"
+            if isinstance(call_id, str):
+                name = self._tool_names.get(call_id, "unknown")
+            ok = data.get("success") is not False
+            return f"[tool] {name} {'ok' if ok else 'FAILED'}"
+
+        if etype == "assistant.turn_end":
+            return f"[turn {self._turn}] end" if self._turn else None
+
+        if etype == "session.warning":
+            return f"[warn] {self._trim(data.get('message'))}"
+
+        if etype in ("session.end", "session.finish", "session.complete"):
+            return "[session] end"
+
+        # Surface anything error-ish we don't explicitly model; skip the rest as noise.
+        if "error" in etype or "fail" in etype:
+            return f"[{etype}] {self._trim(data.get('message'))}".rstrip()
+        return None

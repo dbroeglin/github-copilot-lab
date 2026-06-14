@@ -58,9 +58,12 @@ def build_args(inv: Invocation) -> list[str]:
         "--session-id",
         inv.session_id,
         "--log-dir",
-        str(inv.log_dir),
+        str(Path(inv.log_dir).resolve()),
         "-C",
-        str(inv.workspace),
+        # Always an absolute path: Copilot chdirs into ``-C`` *after* the process
+        # cwd is already the workspace, so a relative value would be resolved
+        # against the workspace and doubled (ENAMETOOLONG on Windows).
+        str(Path(inv.workspace).resolve()),
     ]
     if v.allow_all_tools:
         args.append("--allow-all-tools")
@@ -90,28 +93,66 @@ def build_env(inv: Invocation) -> dict[str, str]:
 
 
 class CopilotInvoker:
-    """Invoke the real Copilot CLI."""
+    """Invoke the real Copilot CLI.
 
-    def __init__(self, binary: str = "copilot") -> None:
+    When ``stream`` is provided, Copilot's combined stdout/stderr is *teed*: every
+    line is both written to the capture file and forwarded to the callback, so the
+    CLI's ``--verbose`` mode can follow the run live. When it is ``None`` the output
+    is redirected straight to the file (the default, lowest-overhead path).
+    """
+
+    def __init__(
+        self, binary: str = "copilot", *, stream: Callable[[str], None] | None = None
+    ) -> None:
         self.binary = binary
+        self.stream = stream
 
     def run(self, inv: Invocation) -> InvocationResult:
         inv.log_dir.mkdir(parents=True, exist_ok=True)
         inv.stdout_path.parent.mkdir(parents=True, exist_ok=True)
         args = [self.binary, *build_args(inv)]
         env = build_env(inv)
+        # Always an absolute cwd for the same reason ``-C`` is absolute (see build_args).
+        cwd = str(Path(inv.workspace).resolve())
         start = time.monotonic()
-        with inv.stdout_path.open("w", encoding="utf-8") as out:
+        if self.stream is None:
+            exit_code = self._run_captured(args, cwd, env, inv.stdout_path)
+        else:
+            exit_code = self._run_streaming(args, cwd, env, inv.stdout_path)
+        duration = time.monotonic() - start
+        return InvocationResult(exit_code=exit_code, duration_s=duration)
+
+    def _run_captured(
+        self, args: list[str], cwd: str, env: dict[str, str], stdout_path: Path
+    ) -> int:
+        with stdout_path.open("w", encoding="utf-8") as out:
             proc = subprocess.run(
+                args, cwd=cwd, env=env, stdout=out, stderr=subprocess.STDOUT, text=True
+            )
+        return proc.returncode
+
+    def _run_streaming(
+        self, args: list[str], cwd: str, env: dict[str, str], stdout_path: Path
+    ) -> int:
+        assert self.stream is not None
+        with stdout_path.open("w", encoding="utf-8") as out:
+            proc = subprocess.Popen(
                 args,
-                cwd=str(inv.workspace),
+                cwd=cwd,
                 env=env,
-                stdout=out,
+                stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
             )
-        duration = time.monotonic() - start
-        return InvocationResult(exit_code=proc.returncode, duration_s=duration)
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                out.write(line)
+                out.flush()
+                self.stream(line.rstrip("\n"))
+            return proc.wait()
 
 
 class MockInvoker:

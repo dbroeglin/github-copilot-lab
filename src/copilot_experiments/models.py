@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -12,6 +13,20 @@ ReasoningEffort = Literal["none", "low", "medium", "high", "xhigh", "max"]
 Mode = Literal["interactive", "plan", "autopilot"]
 ProviderType = Literal["openai", "azure", "anthropic"]
 WireApi = Literal["completions", "responses"]
+
+# Environment variable names whose *value* should be masked in stored artifacts.
+# A safety net: BYOK secrets belong in ``ProviderConfig`` (already redacted), but a
+# token set via the free-form ``Variant.env`` escape hatch must never be persisted.
+_SECRET_ENV_HINT = re.compile(
+    r"key|token|secret|password|passwd|bearer|credential|authorization", re.IGNORECASE
+)
+
+
+def _redact_env(env: dict[str, str]) -> dict[str, str]:
+    """Mask values of environment variables whose name hints at a secret."""
+    return {
+        k: ("***redacted***" if _SECRET_ENV_HINT.search(k) else v) for k, v in env.items()
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -120,10 +135,12 @@ class Variant(BaseModel):
         return slugify(self.name)
 
     def stored(self) -> dict:
-        """Serializable representation with provider secrets redacted."""
+        """Serializable representation with provider and env secrets redacted."""
         data = self.model_dump(exclude_none=True)
         if self.provider is not None:
             data["provider"] = self.provider.redacted()
+        if self.env:
+            data["env"] = _redact_env(self.env)
         return data
 
 

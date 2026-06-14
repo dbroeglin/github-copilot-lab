@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 from ._util import (
@@ -41,6 +42,12 @@ def _git_head(root: Path) -> str | None:
     return proc.stdout.strip() if proc.returncode == 0 else None
 
 
+def _report(progress: Callable[[str], None] | None, msg: str) -> None:
+    """Forward a human-readable progress line to ``progress`` if one is set."""
+    if progress is not None:
+        progress(msg)
+
+
 def run_experiment(
     experiment: Experiment,
     *,
@@ -49,6 +56,8 @@ def run_experiment(
     results_root: Path | None = None,
     session_state_root: Path | None = None,
     copilot_binary: str = "copilot",
+    progress: Callable[[str], None] | None = None,
+    copilot_stream: Callable[[str], None] | None = None,
 ) -> ExperimentRun:
     """Run every variant x trial of ``experiment`` and write result artifacts.
 
@@ -65,12 +74,17 @@ def run_experiment(
         throwaway temp dir by :func:`dry_run_experiment` so nothing is persisted.
     session_state_root:
         Where Copilot session state lives. Defaults to ``~/.copilot/session-state``.
+    progress:
+        Optional sink for high-level per-trial phase messages (``--verbose``).
+    copilot_stream:
+        Optional sink for Copilot's live output, one rendered line at a time
+        (``--verbose``). Only used when the default :class:`CopilotInvoker` is built.
     """
-    root = Path(root or Path.cwd())
+    root = Path(root or Path.cwd()).resolve()
     layout = Layout(root, results_root=results_root)
 
     if invoker is None:
-        invoker = CopilotInvoker(binary=copilot_binary)
+        invoker = CopilotInvoker(binary=copilot_binary, stream=copilot_stream)
 
     run_id = new_run_id()
     run_dir = layout.run_dir(experiment.slug, run_id)
@@ -86,7 +100,10 @@ def run_experiment(
     )
 
     for variant in experiment.variants:
-        vr = _run_variant(experiment, variant, layout, run_id, invoker, session_state_root)
+        _report(progress, f"variant {variant.slug}: {variant.trials} trial(s)")
+        vr = _run_variant(
+            experiment, variant, layout, run_id, invoker, session_state_root, progress
+        )
         run.variants.append(vr)
         write_json(
             layout.variant_dir(experiment.slug, run_id, variant.slug) / "variant.json",
@@ -119,11 +136,21 @@ def _run_variant(
     run_id: str,
     invoker: Invoker,
     session_state_root: Path | None,
+    progress: Callable[[str], None] | None = None,
 ) -> VariantResult:
     vr = VariantResult(variant=variant)
     for trial_no in range(1, variant.trials + 1):
         vr.trials.append(
-            _run_trial(experiment, variant, trial_no, layout, run_id, invoker, session_state_root)
+            _run_trial(
+                experiment,
+                variant,
+                trial_no,
+                layout,
+                run_id,
+                invoker,
+                session_state_root,
+                progress,
+            )
         )
     return vr
 
@@ -136,71 +163,91 @@ def _run_trial(
     run_id: str,
     invoker: Invoker,
     session_state_root: Path | None,
+    progress: Callable[[str], None] | None = None,
 ) -> TrialResult:
     task = experiment.task
+    tag = f"{variant.slug}/{trial_no:03d}"
     trial_dir = layout.trial_dir(experiment.slug, run_id, variant.slug, trial_no)
     trial_dir.mkdir(parents=True, exist_ok=True)
     workspace = trial_dir / "workspace"
-    log_dir = trial_dir / "logs"
     stdout_path = trial_dir / "stdout.jsonl"
+    # Copilot's own --log-dir debug log is large (megabytes) and echoes masked auth
+    # material; keep it in an ephemeral temp dir so it never lands under results/.
+    # The session events.jsonl (copied below) is our real data source -- see ADR-0010.
+    log_dir = Path(tempfile.mkdtemp(prefix="copilot-log-"))
 
-    write_text(trial_dir / "prompt.md", task.prompt)
-    provision(task, workspace, layout.root)
+    try:
+        write_text(trial_dir / "prompt.md", task.prompt)
+        provision(task, workspace, layout.root)
+        _report(progress, f"[{tag}] workspace provisioned -> {workspace}")
 
-    session_id = new_session_id()
-    inv = Invocation(
-        prompt=task.prompt,
-        workspace=workspace,
-        session_id=session_id,
-        variant=variant,
-        log_dir=log_dir,
-        stdout_path=stdout_path,
-        session_state_root=session_state_root or _default_session_state_root(),
-    )
-    result = invoker.run(inv)
-
-    # Collect the session events and parse metrics.
-    copy_events(session_id, trial_dir / "events.jsonl", inv.session_state_root)
-    events = load_events(trial_dir / "events.jsonl")
-    metrics = parse_metrics(events)
-    if metrics.duration_s is None:
-        metrics.duration_s = round(result.duration_s, 3)
-
-    # Build and persist the richer session analysis (timeline, tool histogram).
-    analysis = analyze_events(events)
-    write_json(trial_dir / "analysis.json", analysis.model_dump(mode="json"))
-
-    # Capture what changed in the workspace.
-    write_text(trial_dir / "workspace.diff", capture_diff(workspace))
-
-    # Run the verification command, if any.
-    success: bool | None = None
-    if task.verify:
-        code, output = run_shell(task.verify, workspace)
-        success = code == 0
-        write_json(
-            trial_dir / "verify.json",
-            {"command": task.verify, "exit_code": code, "success": success, "output": output},
+        session_id = new_session_id()
+        inv = Invocation(
+            prompt=task.prompt,
+            workspace=workspace,
+            session_id=session_id,
+            variant=variant,
+            log_dir=log_dir,
+            stdout_path=stdout_path,
+            session_state_root=session_state_root or _default_session_state_root(),
+        )
+        _report(progress, f"[{tag}] invoking copilot (session {session_id})")
+        result = invoker.run(inv)
+        _report(
+            progress,
+            f"[{tag}] copilot exited {result.exit_code} in {result.duration_s:.1f}s",
         )
 
-    trial = TrialResult(
-        trial_no=trial_no,
-        session_id=session_id,
-        exit_code=result.exit_code,
-        duration_s=round(result.duration_s, 3),
-        success=success,
-        metrics=metrics,
-    )
-    write_json(trial_dir / "meta.json", {
-        "trial_no": trial_no,
-        "session_id": session_id,
-        "exit_code": result.exit_code,
-        "duration_s": trial.duration_s,
-        "success": success,
-        "workspace": str(workspace),
-    })
-    write_json(trial_dir / "metrics.json", metrics.model_dump(mode="json"))
-    return trial
+        # Collect the session events and parse metrics.
+        copy_events(session_id, trial_dir / "events.jsonl", inv.session_state_root)
+        events = load_events(trial_dir / "events.jsonl")
+        metrics = parse_metrics(events)
+        if metrics.duration_s is None:
+            metrics.duration_s = round(result.duration_s, 3)
+        _report(
+            progress,
+            f"[{tag}] session log: {len(events)} events -> {metrics.n_turns} turns, "
+            f"{metrics.n_tool_calls} tool calls, {metrics.total_tokens or 0} tokens",
+        )
+
+        # Build and persist the richer session analysis (timeline, tool histogram).
+        analysis = analyze_events(events)
+        write_json(trial_dir / "analysis.json", analysis.model_dump(mode="json"))
+
+        # Capture what changed in the workspace.
+        write_text(trial_dir / "workspace.diff", capture_diff(workspace))
+
+        # Run the verification command, if any.
+        success: bool | None = None
+        if task.verify:
+            code, output = run_shell(task.verify, workspace)
+            success = code == 0
+            write_json(
+                trial_dir / "verify.json",
+                {"command": task.verify, "exit_code": code, "success": success, "output": output},
+            )
+            _report(progress, f"[{tag}] verify: {'pass' if success else 'fail'} (exit {code})")
+
+        trial = TrialResult(
+            trial_no=trial_no,
+            session_id=session_id,
+            exit_code=result.exit_code,
+            duration_s=round(result.duration_s, 3),
+            success=success,
+            metrics=metrics,
+        )
+        write_json(trial_dir / "meta.json", {
+            "trial_no": trial_no,
+            "session_id": session_id,
+            "exit_code": result.exit_code,
+            "duration_s": trial.duration_s,
+            "success": success,
+            "workspace": str(workspace),
+        })
+        write_json(trial_dir / "metrics.json", metrics.model_dump(mode="json"))
+        return trial
+    finally:
+        force_rmtree(log_dir)
 
 
 def _default_session_state_root() -> Path:

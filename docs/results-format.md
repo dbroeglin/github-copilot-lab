@@ -109,4 +109,10 @@ LIMIT 10;
 ## Secret handling
 
 `variant.json` and the `params_json` column are written via `Variant.stored()`, which masks
-`api_key` and `bearer_token` from any BYOK `ProviderConfig`. Secrets are never persisted.
+`api_key` and `bearer_token` from any BYOK `ProviderConfig`, and redacts the value of any
+`Variant.env` key whose name looks secret-bearing (`key`, `token`, `secret`, `password`,
+`bearer`, `credential`, `authorization`). Secrets are never persisted.
+
+Copilot's own `--log-dir` debug log is **not** kept: it is written to an ephemeral temp dir and
+deleted after each trial (see [ADR-0010](adr/0010-keep-secrets-and-debug-logs-out-of-results.md)).
+The captured `stdout.jsonl` and `events.jsonl` are the durable record.

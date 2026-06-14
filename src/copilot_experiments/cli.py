@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import typer
@@ -14,7 +15,7 @@ from ._util import read_json
 from .analysis import analyze_events
 from .index import list_runs as index_list_runs
 from .index import reindex as index_reindex
-from .models import DryRunReport, Experiment
+from .models import DryRunReport, Experiment, ExperimentRun
 from .render import render_session_analysis
 from .runner import dry_run_experiment, run_experiment
 from .scaffold import ScaffoldError, init_experiment_repo
@@ -114,12 +115,22 @@ def run(
         help="Validate the whole pipeline in a throwaway dir and persist nothing.",
     ),
     copilot_binary: str = typer.Option("copilot", "--copilot", help="Path to the copilot binary."),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Stream per-trial progress and live Copilot output as the run proceeds.",
+    ),
 ) -> None:
     """Discover and run experiment(s) defined under ``experiments/``.
 
     With ``--dry-run`` the full pipeline is exercised with the mock invoker inside a
     temporary directory, each stage is validated, and everything is deleted again --
     no run is recorded under ``results/``.
+
+    Pass ``--verbose`` to stream per-trial progress (workspace provisioning, the
+    Copilot invocation, session-log/metrics, and verification) plus Copilot's own
+    output live as the run proceeds.
     """
     root = Path(root or Path.cwd())
     layout = Layout(root)
@@ -149,9 +160,18 @@ def run(
     for _path, experiment in experiments:
         console.print(f"[bold]Running[/bold] {experiment.name} "
                       f"({len(experiment.variants)} variant(s))")
-        run_obj = run_experiment(experiment, root=root, copilot_binary=copilot_binary)
+        progress = _make_progress() if verbose else None
+        copilot_stream = _make_copilot_stream() if verbose else None
+        run_obj = run_experiment(
+            experiment,
+            root=root,
+            copilot_binary=copilot_binary,
+            progress=progress,
+            copilot_stream=copilot_stream,
+        )
         summary = read_json(layout.run_dir(experiment.slug, run_obj.run_id) / "summary.json")
         _print_run_summary(summary)
+        _warn_failed_trials(layout, experiment, run_obj)
         console.print(f"[dim]results:[/dim] {layout.run_dir(experiment.slug, run_obj.run_id)}\n")
 
 
@@ -370,6 +390,76 @@ def _print_dry_run_report(report: DryRunReport) -> None:
         console.print(f"[green]plumbing OK[/green] {tail}")
     else:
         console.print(f"[red]plumbing FAILED[/red] {tail}")
+
+
+def _make_progress() -> Callable[[str], None]:
+    """Return a progress sink for ``run --verbose``.
+
+    Each line is printed dimmed. ``markup=False`` keeps Copilot's raw output and the
+    ``[variant/NNN]`` phase tags from being interpreted as Rich markup.
+    """
+
+    def _emit(msg: str) -> None:
+        console.print(msg, style="dim", markup=False, highlight=False)
+
+    return _emit
+
+
+def _make_copilot_stream() -> Callable[[str], None]:
+    """Return a live Copilot-output sink for ``run --verbose``.
+
+    Copilot's ``--output-format json`` stream is a firehose of JSON events; a stateful
+    :class:`~copilot_experiments.render.LiveEventFormatter` condenses each into a short,
+    ASCII-tagged line (turns, messages, tool calls). Unparseable lines fall back to raw
+    text; pure-noise events are dropped. Output is indented under the phase messages.
+    """
+    from .render import LiveEventFormatter
+
+    formatter = LiveEventFormatter()
+
+    def _emit(line: str) -> None:
+        rendered = formatter.format(line)
+        if rendered is not None:
+            console.print(f"    {rendered}", style="dim", markup=False, highlight=False)
+
+    return _emit
+
+
+def _warn_failed_trials(layout: Layout, experiment: Experiment, run: ExperimentRun) -> None:
+    """Loudly flag trials where Copilot did not actually run.
+
+    The summary table still renders a row for a Copilot invocation that errored
+    out immediately (e.g. a bad working directory) -- just with zero turns. That
+    makes a broken run look deceptively clean, so surface those cases explicitly
+    and point at the captured stdout for diagnosis.
+    """
+    problems: list[str] = []
+    for vr in run.variants:
+        for trial in vr.trials:
+            no_log = trial.metrics.n_turns == 0
+            failed = trial.exit_code != 0
+            if not (no_log or failed):
+                continue
+            trial_dir = layout.trial_dir(
+                experiment.slug, run.run_id, vr.variant.slug, trial.trial_no
+            )
+            reasons = []
+            if failed:
+                reasons.append(f"copilot exit={trial.exit_code}")
+            if no_log:
+                reasons.append("no session log captured (0 turns)")
+            problems.append(
+                f"  {vr.variant.slug}/{trial.trial_no:03d}: {', '.join(reasons)}\n"
+                f"      -> {trial_dir / 'stdout.jsonl'}"
+            )
+    if not problems:
+        return
+    err.print(
+        f"[yellow]Warning:[/yellow] Copilot may not have run for {len(problems)} trial(s). "
+        "Inspect the captured stdout:"
+    )
+    for line in problems:
+        err.print(f"[yellow]{line}[/yellow]")
 
 
 def _print_run_summary(summary: dict) -> None:

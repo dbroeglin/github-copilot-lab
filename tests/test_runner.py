@@ -44,6 +44,8 @@ def test_run_experiment_produces_artifacts(repo_root: Path, experiment: Experime
         assert (td / "analysis.json").exists()
         assert (td / "events.jsonl").exists()
         assert (td / "prompt.md").exists()
+        # Copilot's bulky --log-dir debug log must never be persisted under results/.
+        assert not (td / "logs").exists()
 
 
 def test_run_experiment_without_solver_fails_verify(repo_root: Path, experiment: Experiment):
@@ -70,6 +72,26 @@ def test_run_experiment_with_solver_succeeds(repo_root: Path, experiment: Experi
 
     meta = json.loads((trial / "meta.json").read_text(encoding="utf-8"))
     assert meta["success"] is True
+
+
+def test_run_experiment_forwards_progress_per_trial(repo_root: Path, experiment: Experiment):
+    msgs: list[str] = []
+    _mock_run(experiment, repo_root, solver=solve)  # warm-up run (no progress)
+    msgs.clear()
+    run_experiment(
+        experiment,
+        root=repo_root,
+        invoker=MockInvoker(solver=solve),
+        session_state_root=repo_root / ".session-state",
+        progress=msgs.append,
+    )
+
+    # Per-variant header plus a distinct, tagged set of phase lines per trial.
+    assert any(m.startswith("variant beta: 2 trial(s)") for m in msgs)
+    for tag in ("alpha/001", "beta/001", "beta/002"):
+        assert any(m.startswith(f"[{tag}] invoking copilot") for m in msgs)
+        assert any(m.startswith(f"[{tag}] session log:") for m in msgs)
+        assert any(m.startswith(f"[{tag}] verify:") for m in msgs)
 
 
 def test_run_experiment_populates_index(repo_root: Path, experiment: Experiment):

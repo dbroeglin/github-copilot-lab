@@ -74,6 +74,11 @@ copilot -p "<prompt>" --output-format json --session-id <uuid> \
 
 - `--session-id` is generated per trial so the rich session stream at
   `~/.copilot/session-state/<id>/events.jsonl` can be copied alongside the trial's artifacts.
+- `-C` (and `--log-dir`) are always **absolute** so Copilot's post-cwd `chdir` can't double the
+  path (see [ADR-0009](adr/0009-absolute-workspace-path-for-copilot.md)).
+- `--log-dir` points at an **ephemeral temp dir**, removed after each trial: Copilot's bulky
+  internal debug log is never persisted (see
+  [ADR-0010](adr/0010-keep-secrets-and-debug-logs-out-of-results.md)).
 - **BYOK** providers are injected purely through `COPILOT_PROVIDER_*` environment variables;
   a variant is therefore just *flags + env*.
 

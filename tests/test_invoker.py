@@ -7,9 +7,17 @@ and environment (including BYOK secrets that must never reach stored artifacts).
 
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 
-from copilot_experiments.invoker import Invocation, MockInvoker, build_args, build_env
+from copilot_experiments.invoker import (
+    CopilotInvoker,
+    Invocation,
+    MockInvoker,
+    build_args,
+    build_env,
+)
 from copilot_experiments.models import ProviderConfig, Variant
 from copilot_experiments.sessionlog import events_path, load_events, parse_metrics
 
@@ -106,6 +114,49 @@ def test_build_args_translates_variant_flags():
     assert "--allow-all-tools" in args  # default
     assert args.count("--allow-tool") == 1
     assert args.count("--deny-tool") == 1
+
+
+def test_build_args_uses_absolute_workspace_and_log_dir(tmp_path: Path):
+    # Regression: a *relative* ``-C`` was resolved against the process cwd (already
+    # the workspace) and doubled -> ENAMETOOLONG -> Copilot no-op. ``-C`` and
+    # ``--log-dir`` must always be absolute. See ADR-0009.
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    inv = Invocation(
+        prompt="P",
+        workspace=Path("ws"),  # deliberately relative
+        session_id="s",
+        variant=Variant(name="v"),
+        log_dir=Path("logs"),  # deliberately relative
+        stdout_path=tmp_path / "stdout.jsonl",
+        session_state_root=tmp_path / "state",
+    )
+    args = build_args(inv)
+
+    c_path = Path(args[args.index("-C") + 1])
+    log_path = Path(args[args.index("--log-dir") + 1])
+    assert c_path.is_absolute()
+    assert log_path.is_absolute()
+    assert c_path == Path("ws").resolve()
+    assert log_path == Path("logs").resolve()
+
+
+def test_streaming_invoker_tees_lines_to_sink_and_file(tmp_path: Path):
+    # ``--verbose`` relies on the streaming path forwarding every Copilot output
+    # line to the sink *and* still capturing it to stdout.jsonl. Drive it with a
+    # trivial Python subprocess so the test stays offline and cross-platform.
+    collected: list[str] = []
+    invoker = CopilotInvoker(binary=sys.executable, stream=collected.append)
+    stdout_path = tmp_path / "stdout.jsonl"
+    script = "import sys\nfor i in range(3): print('line', i)\nsys.exit(0)\n"
+    code = invoker._run_streaming(
+        [sys.executable, "-c", script], str(tmp_path), dict(os.environ), stdout_path
+    )
+
+    assert code == 0
+    assert collected == ["line 0", "line 1", "line 2"]
+    captured = stdout_path.read_text(encoding="utf-8").splitlines()
+    assert captured == ["line 0", "line 1", "line 2"]
 
 
 def test_build_env_injects_provider_but_storage_redacts():
