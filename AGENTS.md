@@ -24,16 +24,20 @@ plus a [Typer](https://typer.tiangolo.com/) CLI. It is developed with [`uv`](htt
   - `workspace.py` — provisions an isolated per-trial workspace (copy a fixture or `git clone`),
     commits a git baseline, and captures a diff of Copilot's changes.
   - `sessionlog.py` — locates and parses Copilot's `events.jsonl` into `Metrics`.
+  - `analysis.py` — derives a rendering-agnostic `SessionAnalysis` (tools, turns, tokens) from session events.
+  - `render.py` — renders a `SessionAnalysis` to the terminal with Rich (backs the `analyze` command).
   - `runner.py` — orchestration: variants × trials → result artifacts + index.
   - `storage.py` — the `results/` filesystem `Layout` and run discovery.
   - `index.py` — the SQLite index (`results/index.db`) derived from the filesystem.
   - `report.py` — aggregation, `summary.json`, and `summary.md`.
   - `scaffold.py` — `init` logic: render `templates/experiment_repo/` into a new repo.
-  - `cli.py` — the Typer app (`init`, `run`, `list`, `show`, `inspect`, `reindex`).
+  - `cli.py` — the Typer app (`init`, `run`, `list`, `show`, `analyze`, `inspect`, `reindex`).
   - `templates/experiment_repo/` — package-data template for scaffolded experiment repos.
+- `examples/tracer_bullet/` — a committed, runnable multi-turn example experiment (textstats).
 - `sandbox/` — local scratch space for exercising the lib/CLI (its `results/` are gitignored).
 - `tests/` — pytest suite (uses `MockInvoker`; **never** requires a real `copilot` or network).
-- `docs/` — architecture, authoring guide, results-format reference, BYOK/local-models guide.
+- `docs/` — architecture, authoring guide, analysis (`analyze`), results-format reference,
+  BYOK/local-models guide, and `docs/adr/` (architecture decision records).
 
 ## Architecture invariants (keep these true)
 - **The filesystem is the source of truth.** `results/index.db` is a derived, rebuildable
@@ -72,4 +76,5 @@ that dir (its `pyproject` depends on this package via a git URL that won't resol
 - Python 3.10+, line length 100, ruff-clean (`E,F,I,UP,B,W`; `B008` is ignored for Typer).
 - Prefer small, well-typed functions; keep modules single-purpose (see the map above).
 - Update `docs/` and the experiment-repo template when you change public behavior.
+- Record significant/architectural decisions as an ADR under `docs/adr/` (copy `0000-template.md`).
 - Commits include the `Co-authored-by: Copilot` trailer.

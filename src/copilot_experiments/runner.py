@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 from ._util import iso, new_run_id, new_session_id, utcnow, write_json, write_text
+from .analysis import analyze_events
 from .index import connect, index_run_dir
 from .invoker import CopilotInvoker, Invocation, Invoker, MockInvoker
 from .models import Experiment, ExperimentRun, TrialResult, Variant, VariantResult
@@ -149,6 +150,10 @@ def _run_trial(
     metrics = parse_metrics(events)
     if metrics.duration_s is None:
         metrics.duration_s = round(result.duration_s, 3)
+
+    # Build and persist the richer session analysis (timeline, tool histogram).
+    analysis = analyze_events(events)
+    write_json(trial_dir / "analysis.json", analysis.model_dump(mode="json"))
 
     # Capture what changed in the workspace.
     write_text(trial_dir / "workspace.diff", capture_diff(workspace))

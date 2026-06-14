@@ -160,6 +160,69 @@ class Metrics(BaseModel):
     total_tokens: int | None = None
 
 
+class ToolStat(BaseModel):
+    """How often a single tool was invoked in a session, and how often it failed."""
+
+    name: str
+    calls: int = 0
+    failures: int = 0
+
+
+class TurnSummary(BaseModel):
+    """One assistant turn (``assistant.turn_start`` .. ``assistant.turn_end``)."""
+
+    turn_no: int
+    turn_id: str | None = None
+    started_at: str | None = None
+    ended_at: str | None = None
+    duration_s: float | None = None
+    assistant_messages: int = 0
+    text_preview: str | None = None
+    tools: list[str] = Field(default_factory=list)
+    output_tokens: int | None = None
+
+
+class SessionAnalysis(BaseModel):
+    """A structured, human-friendly overview of a single Copilot session log.
+
+    Derived purely from a session's ``events.jsonl``. Kept as plain data (no
+    rendering) so it can be serialized to ``analysis.json``, rendered in the CLI
+    with Rich, or consumed by a future web explorer.
+    """
+
+    # Session header / context.
+    session_id: str | None = None
+    copilot_version: str | None = None
+    producer: str | None = None
+    models: list[str] = Field(default_factory=list)
+    reasoning_effort: str | None = None
+    repository: str | None = None
+    branch: str | None = None
+    cwd: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    duration_s: float | None = None
+
+    # Totals.
+    n_events: int = 0
+    n_turns: int = 0
+    n_user_messages: int = 0
+    n_assistant_messages: int = 0
+    n_tool_calls: int = 0
+    n_tool_failures: int = 0
+    n_warnings: int = 0
+    n_hooks: int = 0
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+
+    # Breakdowns.
+    tools: list[ToolStat] = Field(default_factory=list)
+    turns: list[TurnSummary] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    event_type_counts: dict[str, int] = Field(default_factory=dict)
+
+
 class TrialResult(BaseModel):
     trial_no: int
     session_id: str

@@ -30,6 +30,7 @@ def test_run_experiment_dry_run_produces_artifacts(repo_root: Path, experiment: 
     for td in trial_dirs:
         assert (td / "meta.json").exists()
         assert (td / "metrics.json").exists()
+        assert (td / "analysis.json").exists()
         assert (td / "events.jsonl").exists()
         assert (td / "prompt.md").exists()
 

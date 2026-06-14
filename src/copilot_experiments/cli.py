@@ -11,9 +11,11 @@ from rich.console import Console
 from rich.table import Table
 
 from ._util import read_json
+from .analysis import analyze_events
 from .index import list_runs as index_list_runs
 from .index import reindex as index_reindex
 from .models import Experiment
+from .render import render_session_analysis
 from .runner import run_experiment
 from .scaffold import ScaffoldError, init_experiment_repo
 from .sessionlog import load_events
@@ -255,6 +257,45 @@ def inspect(
 
 
 @app.command()
+def analyze(
+    run_id: str | None = typer.Argument(None, help="Run id or unique prefix."),
+    variant: str | None = typer.Option(None, "--variant", help="Variant slug (default: first)."),
+    trial: int | None = typer.Option(None, "--trial", help="Trial number (default: first)."),
+    file: Path | None = typer.Option(
+        None, "--file", help="Analyze an events.jsonl file directly (ignores run/variant/trial)."
+    ),
+    last: bool = typer.Option(False, "--last", help="Analyze the most recent run."),
+    max_turns: int = typer.Option(0, "--max-turns", help="Limit timeline rows (0 = all)."),
+    root: Path | None = typer.Option(None, "--root", help="Experiment repository root."),
+) -> None:
+    """Analyze a captured session log and render a rich overview of what happened."""
+    if file is not None:
+        events = load_events(file)
+        if not events:
+            err.print(f"[red]No events found in[/red] {file}")
+            raise typer.Exit(1)
+        render_session_analysis(analyze_events(events), console, title=file.name,
+                                max_turns=max_turns)
+        return
+
+    root = Path(root or Path.cwd())
+    layout = Layout(root)
+    run_dir = layout.latest_run() if last else (layout.find_run(run_id) if run_id else None)
+    if run_dir is None:
+        err.print("[red]Run not found.[/red] Pass a run id, --last, or --file.")
+        raise typer.Exit(1)
+
+    events_path, label = _resolve_trial_events(run_dir, variant, trial)
+    if events_path is None:
+        err.print(f"[red]No trial session log found in[/red] {run_dir}")
+        raise typer.Exit(1)
+
+    render_session_analysis(
+        analyze_events(load_events(events_path)), console, title=label, max_turns=max_turns
+    )
+
+
+@app.command()
 def reindex(
     root: Path | None = typer.Option(None, "--root", help="Experiment repository root."),
 ) -> None:
@@ -268,6 +309,35 @@ def reindex(
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+def _resolve_trial_events(
+    run_dir: Path, variant: str | None, trial: int | None
+) -> tuple[Path | None, str]:
+    """Locate a trial's ``events.jsonl``, defaulting to the first variant/trial."""
+    variants_dir = run_dir / "variants"
+    if variant is not None:
+        vdir = variants_dir / variant
+    else:
+        subdirs = sorted(p for p in variants_dir.iterdir() if p.is_dir()) \
+            if variants_dir.is_dir() else []
+        if not subdirs:
+            return None, run_dir.name
+        vdir = subdirs[0]
+
+    trials_dir = vdir / "trials"
+    if trial is not None:
+        tdir = trials_dir / f"{trial:03d}"
+    else:
+        subdirs = sorted(p for p in trials_dir.iterdir() if p.is_dir()) \
+            if trials_dir.is_dir() else []
+        if not subdirs:
+            return None, f"{run_dir.name} · {vdir.name}"
+        tdir = subdirs[0]
+
+    label = f"{run_dir.name} · {vdir.name}/{tdir.name}"
+    events_path = tdir / "events.jsonl"
+    return (events_path if events_path.exists() else None), label
+
+
 def _print_run_summary(summary: dict) -> None:
     sr = summary.get("overall_success_rate")
     title = (

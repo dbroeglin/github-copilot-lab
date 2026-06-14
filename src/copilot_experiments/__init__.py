@@ -22,13 +22,17 @@ Example
 
 from __future__ import annotations
 
+from .analysis import analyze_events
 from .models import (
     Experiment,
     ExperimentRun,
     Metrics,
     ProviderConfig,
+    SessionAnalysis,
     Task,
+    ToolStat,
     TrialResult,
+    TurnSummary,
     Variant,
     VariantResult,
 )
@@ -39,10 +43,14 @@ __all__ = [
     "ExperimentRun",
     "Metrics",
     "ProviderConfig",
+    "SessionAnalysis",
     "Task",
+    "ToolStat",
     "TrialResult",
+    "TurnSummary",
     "Variant",
     "VariantResult",
+    "analyze_events",
     "run_experiment",
     "run",
 ]

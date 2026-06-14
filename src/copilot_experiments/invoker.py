@@ -128,10 +128,12 @@ class MockInvoker:
         exit_code: int = 0,
         solver: Callable[[Path], None] | None = None,
         leave_note: bool = True,
+        turns: int = 4,
     ) -> None:
         self.exit_code = exit_code
         self.solver = solver
         self.leave_note = leave_note
+        self.turns = max(1, turns)
 
     def run(self, inv: Invocation) -> InvocationResult:
         model = inv.variant.model or "mock-model"
@@ -144,7 +146,7 @@ class MockInvoker:
                 f"Mock Copilot run for variant '{inv.variant.name}'.\n", encoding="utf-8"
             )
 
-        events = self._synthetic_events(inv.session_id, model)
+        events = self._synthetic_events(inv, model)
         dest = events_path(inv.session_id, inv.session_state_root)
         dest.parent.mkdir(parents=True, exist_ok=True)
         with dest.open("w", encoding="utf-8") as fh:
@@ -159,22 +161,82 @@ class MockInvoker:
         duration = time.monotonic() - start
         return InvocationResult(exit_code=self.exit_code, duration_s=duration)
 
-    @staticmethod
-    def _synthetic_events(session_id: str, model: str) -> list[dict]:
+    def _synthetic_events(self, inv: Invocation, model: str) -> list[dict]:
+        """Build a small but realistic, multi-turn ``events.jsonl`` (real schema).
+
+        Emits ``session.start`` / ``user.message`` and several assistant turns, each
+        invoking a tool, so that downstream metrics *and* the richer session analysis
+        have something meaningful to work with offline.
+        """
         t0 = utcnow()
+        clock = {"n": 0}
 
-        def at(offset: float) -> str:
-            return iso(t0 + _dt.timedelta(seconds=offset))
+        def at() -> str:
+            clock["n"] += 1
+            return iso(t0 + _dt.timedelta(seconds=clock["n"] * 0.25))
 
-        return [
-            {"type": "session.start", "timestamp": at(0),
-             "data": {"sessionId": session_id, "producer": "mock"}},
-            {"type": "session.model_change", "timestamp": at(0.1),
-             "data": {"newModel": model}},
-            {"type": "assistant.turn_start", "timestamp": at(0.2), "data": {"turnId": "0"}},
-            {"type": "assistant.message", "timestamp": at(0.5),
-             "data": {"text": "(mock) working on the task", "model": model}},
-            {"type": "tool.execution_complete", "timestamp": at(0.8),
-             "data": {"success": True, "model": model, "toolCallId": "mock-1"}},
-            {"type": "assistant.turn_end", "timestamp": at(1.0), "data": {"turnId": "0"}},
+        session_id = inv.session_id
+        # A deterministic, varied tool script: one deliberate failure + recovery.
+        script = [
+            ("view", "Exploring the workspace to understand the task.", True),
+            ("edit", "Applying the change to fix the issue.", True),
+            ("powershell", "Running the verification command.", False),
+            ("powershell", "Re-running verification after the fix.", True),
         ]
+        script = script[: self.turns]
+
+        events: list[dict] = [
+            {
+                "type": "session.start",
+                "timestamp": at(),
+                "data": {
+                    "sessionId": session_id,
+                    "producer": "mock",
+                    "copilotVersion": "mock-0",
+                    "selectedModel": model,
+                    "reasoningEffort": inv.variant.reasoning_effort,
+                    "context": {
+                        "cwd": str(inv.workspace),
+                        "branch": "mock",
+                        "repository": "mock/experiment",
+                    },
+                    "startTime": iso(t0),
+                },
+            },
+            {
+                "type": "user.message",
+                "timestamp": at(),
+                "data": {"content": inv.prompt},
+            },
+        ]
+
+        for i, (tool, text, ok) in enumerate(script):
+            call_id = f"mock-{i}"
+            events += [
+                {"type": "assistant.turn_start", "timestamp": at(),
+                 "data": {"turnId": str(i)}},
+                {"type": "assistant.message", "timestamp": at(),
+                 "data": {"model": model, "content": text, "turnId": str(i),
+                          "outputTokens": 40 + 10 * i,
+                          "toolRequests": [{"toolCallId": call_id, "name": tool}]}},
+                {"type": "tool.execution_start", "timestamp": at(),
+                 "data": {"toolCallId": call_id, "toolName": tool, "model": model,
+                          "turnId": str(i)}},
+                {"type": "tool.execution_complete", "timestamp": at(),
+                 "data": {"toolCallId": call_id, "turnId": str(i), "success": ok}},
+                {"type": "assistant.turn_end", "timestamp": at(),
+                 "data": {"turnId": str(i)}},
+            ]
+
+        # A closing turn with a final message and no tool call.
+        final_turn = len(script)
+        events += [
+            {"type": "assistant.turn_start", "timestamp": at(),
+             "data": {"turnId": str(final_turn)}},
+            {"type": "assistant.message", "timestamp": at(),
+             "data": {"model": model, "turnId": str(final_turn), "outputTokens": 25,
+                      "content": f"(mock) Completed the task for variant '{inv.variant.name}'."}},
+            {"type": "assistant.turn_end", "timestamp": at(),
+             "data": {"turnId": str(final_turn)}},
+        ]
+        return events
