@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -52,11 +53,19 @@ def test_run_experiment_with_solver_succeeds(repo_root: Path, experiment: Experi
     successes = [t.success for vr in run.variants for t in vr.trials]
     assert all(s is True for s in successes)
 
-    # A diff should have been captured for the new SOLVED file.
+    # The on-disk artifacts must corroborate success end-to-end.
     layout = Layout(repo_root)
     run_dir = layout.run_dir(experiment.slug, run.run_id)
-    a_diff = (run_dir / "variants" / "alpha" / "trials" / "001" / "workspace.diff")
-    assert "SOLVED" in a_diff.read_text(encoding="utf-8")
+    trial = run_dir / "variants" / "alpha" / "trials" / "001"
+
+    diff = (trial / "workspace.diff").read_text(encoding="utf-8")
+    assert "SOLVED" in diff and diff.strip() != ""
+
+    verify = json.loads((trial / "verify.json").read_text(encoding="utf-8"))
+    assert verify["success"] is True and verify["exit_code"] == 0
+
+    meta = json.loads((trial / "meta.json").read_text(encoding="utf-8"))
+    assert meta["success"] is True
 
 
 def test_run_experiment_populates_index(repo_root: Path, experiment: Experiment):
