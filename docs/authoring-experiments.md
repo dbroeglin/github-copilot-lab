@@ -68,20 +68,23 @@ mkdir -p fixtures/my_fixture   # put broken code + a test that fails
 
 # 2. Write experiments/my_experiment.py defining `experiment` (as above).
 
-# 3. Validate the plumbing with a mock run (no credits, no network):
+# 3. Validate the whole pipeline without spending credits (persists nothing):
 uv run copilot-experiments run --dry-run
 
-# 4. Inspect the produced run:
+# 4. Run for real (needs an authenticated `copilot`, or BYOK env):
+uv run copilot-experiments run
+
+# 5. Inspect the produced run:
 uv run copilot-experiments show --last
 uv run copilot-experiments inspect --last --variant opus-medium --trial 1
-
-# 5. Run for real (needs an authenticated `copilot`, or BYOK env):
-uv run copilot-experiments run
 ```
 
-> **Dry-runs use a mock Copilot.** By default the mock does *not* solve the task, so `verify`
-> will report failure — that is expected. A dry-run validates the harness plumbing (workspace,
-> artifacts, metrics, index), not task-solving.
+> **`--dry-run` validates the plumbing, then throws everything away.** It runs the whole
+> pipeline with a mock Copilot inside a temp dir and checks each stage produced its artifact
+> (workspace + git baseline, session log, metrics, analysis, a **non-empty diff**, verify, run
+> summary, index), printing a pass/fail checklist. It does *not* prove task-solving — the mock
+> does not solve the task — and it persists nothing under `results/`; use a real `run` to
+> capture data to `show`, `analyze`, or `inspect`.
 
 ## Tips
 

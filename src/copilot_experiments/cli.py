@@ -14,9 +14,9 @@ from ._util import read_json
 from .analysis import analyze_events
 from .index import list_runs as index_list_runs
 from .index import reindex as index_reindex
-from .models import Experiment
+from .models import DryRunReport, Experiment
 from .render import render_session_analysis
-from .runner import run_experiment
+from .runner import dry_run_experiment, run_experiment
 from .scaffold import ScaffoldError, init_experiment_repo
 from .sessionlog import load_events
 from .storage import Layout
@@ -108,10 +108,19 @@ def init(
 def run(
     name: str | None = typer.Argument(None, help="Only run the experiment with this name/slug."),
     root: Path | None = typer.Option(None, "--root", help="Experiment repository root."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Use the mock invoker (no Copilot)."),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Validate the whole pipeline in a throwaway dir and persist nothing.",
+    ),
     copilot_binary: str = typer.Option("copilot", "--copilot", help="Path to the copilot binary."),
 ) -> None:
-    """Discover and run experiment(s) defined under ``experiments/``."""
+    """Discover and run experiment(s) defined under ``experiments/``.
+
+    With ``--dry-run`` the full pipeline is exercised with the mock invoker inside a
+    temporary directory, each stage is validated, and everything is deleted again --
+    no run is recorded under ``results/``.
+    """
     root = Path(root or Path.cwd())
     layout = Layout(root)
     experiments = _load_experiments(layout.experiments_dir)
@@ -125,13 +134,22 @@ def run(
             err.print(f"[red]No experiment matched[/red] {name!r}")
             raise typer.Exit(1)
 
+    if dry_run:
+        all_ok = True
+        for _path, experiment in experiments:
+            console.print(
+                f"[bold]Dry-run[/bold] {experiment.name} "
+                f"({len(experiment.variants)} variant(s)) [dim]— validating plumbing[/dim]"
+            )
+            report = dry_run_experiment(experiment, root=root)
+            _print_dry_run_report(report)
+            all_ok = all_ok and report.ok
+        raise typer.Exit(0 if all_ok else 1)
+
     for _path, experiment in experiments:
         console.print(f"[bold]Running[/bold] {experiment.name} "
-                      f"({len(experiment.variants)} variant(s))"
-                      + (" [dim](dry-run)[/dim]" if dry_run else ""))
-        run_obj = run_experiment(
-            experiment, root=root, dry_run=dry_run, copilot_binary=copilot_binary
-        )
+                      f"({len(experiment.variants)} variant(s))")
+        run_obj = run_experiment(experiment, root=root, copilot_binary=copilot_binary)
         summary = read_json(layout.run_dir(experiment.slug, run_obj.run_id) / "summary.json")
         _print_run_summary(summary)
         console.print(f"[dim]results:[/dim] {layout.run_dir(experiment.slug, run_obj.run_id)}\n")
@@ -336,6 +354,22 @@ def _resolve_trial_events(
     label = f"{run_dir.name} · {vdir.name}/{tdir.name}"
     events_path = tdir / "events.jsonl"
     return (events_path if events_path.exists() else None), label
+
+
+def _print_dry_run_report(report: DryRunReport) -> None:
+    table = Table(title=f"Dry-run · {report.experiment}", show_lines=False)
+    table.add_column("", justify="center", width=3)
+    table.add_column("check")
+    table.add_column("detail", style="dim")
+    for c in report.checks:
+        mark = "[green]✓[/green]" if c.ok else "[red]✗[/red]"
+        table.add_row(mark, c.name, c.detail)
+    console.print(table)
+    tail = "[dim]— nothing persisted (temp dir removed)[/dim]\n"
+    if report.ok:
+        console.print(f"[green]plumbing OK[/green] {tail}")
+    else:
+        console.print(f"[red]plumbing FAILED[/red] {tail}")
 
 
 def _print_run_summary(summary: dict) -> None:

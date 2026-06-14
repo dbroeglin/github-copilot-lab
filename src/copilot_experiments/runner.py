@@ -3,13 +3,31 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
 from pathlib import Path
 
-from ._util import iso, new_run_id, new_session_id, utcnow, write_json, write_text
+from ._util import (
+    force_rmtree,
+    iso,
+    new_run_id,
+    new_session_id,
+    read_json,
+    utcnow,
+    write_json,
+    write_text,
+)
 from .analysis import analyze_events
 from .index import connect, index_run_dir
 from .invoker import CopilotInvoker, Invocation, Invoker, MockInvoker
-from .models import Experiment, ExperimentRun, TrialResult, Variant, VariantResult
+from .models import (
+    DryRunCheck,
+    DryRunReport,
+    Experiment,
+    ExperimentRun,
+    TrialResult,
+    Variant,
+    VariantResult,
+)
 from .report import build_summary, summary_markdown
 from .sessionlog import copy_events, load_events, parse_metrics
 from .storage import Layout
@@ -28,7 +46,7 @@ def run_experiment(
     *,
     root: Path | None = None,
     invoker: Invoker | None = None,
-    dry_run: bool = False,
+    results_root: Path | None = None,
     session_state_root: Path | None = None,
     copilot_binary: str = "copilot",
 ) -> ExperimentRun:
@@ -37,29 +55,26 @@ def run_experiment(
     Parameters
     ----------
     root:
-        Experiment repository root (defaults to the current directory). Results
-        are written under ``root/results``.
+        Experiment repository root (defaults to the current directory). Fixtures
+        and experiment definitions are read from here.
     invoker:
-        Strategy used to invoke Copilot. Defaults to :class:`CopilotInvoker`,
-        or :class:`MockInvoker` when ``dry_run`` is true.
-    dry_run:
-        Use the mock invoker (no Copilot credits / network needed).
+        Strategy used to invoke Copilot. Defaults to :class:`CopilotInvoker`.
+        Tests pass a :class:`MockInvoker`; :func:`dry_run_experiment` uses one too.
+    results_root:
+        Where run artifacts are written. Defaults to ``root/results``. Pointed at a
+        throwaway temp dir by :func:`dry_run_experiment` so nothing is persisted.
     session_state_root:
         Where Copilot session state lives. Defaults to ``~/.copilot/session-state``.
-        Overridden automatically for dry-runs so synthetic events are isolated.
     """
     root = Path(root or Path.cwd())
-    layout = Layout(root)
+    layout = Layout(root, results_root=results_root)
 
     if invoker is None:
-        invoker = MockInvoker() if dry_run else CopilotInvoker(binary=copilot_binary)
+        invoker = CopilotInvoker(binary=copilot_binary)
 
     run_id = new_run_id()
     run_dir = layout.run_dir(experiment.slug, run_id)
     run_dir.mkdir(parents=True, exist_ok=True)
-
-    if session_state_root is None and dry_run:
-        session_state_root = run_dir / ".session-state"
 
     run = ExperimentRun(
         run_id=run_id,
@@ -192,3 +207,122 @@ def _default_session_state_root() -> Path:
     from .sessionlog import session_state_root
 
     return session_state_root()
+
+
+# --------------------------------------------------------------------------- #
+# Dry-run: validate the whole pipeline, persist nothing
+# --------------------------------------------------------------------------- #
+def dry_run_experiment(
+    experiment: Experiment,
+    *,
+    root: Path | None = None,
+    invoker: Invoker | None = None,
+) -> DryRunReport:
+    """Validate the full run pipeline without leaving anything behind.
+
+    Runs every stage with a mock invoker inside a throwaway temp directory,
+    asserts that each stage produced its artifact, then deletes the temp dir.
+    Fixtures are still read from ``root``; only the *outputs* are redirected.
+    Returns a :class:`DryRunReport` -- nothing is persisted under ``root``.
+    """
+    root = Path(root or Path.cwd())
+    tmp = Path(tempfile.mkdtemp(prefix="copilot-exp-dryrun-"))
+    try:
+        run = run_experiment(
+            experiment,
+            root=root,
+            invoker=invoker or MockInvoker(),
+            results_root=tmp,
+            session_state_root=tmp / ".session-state",
+        )
+        layout = Layout(root, results_root=tmp)
+        checks = _validate_plumbing(layout, experiment, run)
+        return DryRunReport(experiment=experiment.name, checks=checks)
+    finally:
+        force_rmtree(tmp)
+
+
+def _check(name: str, ok: bool, detail: str = "") -> DryRunCheck:
+    return DryRunCheck(name=name, ok=ok, detail=detail)
+
+
+def _validate_plumbing(
+    layout: Layout, experiment: Experiment, run: ExperimentRun
+) -> list[DryRunCheck]:
+    """Inspect the on-disk artifacts of the first trial (and the run) and report
+    whether each pipeline stage actually did its job."""
+    checks: list[DryRunCheck] = []
+    variant = experiment.variants[0]
+    run_dir = layout.run_dir(experiment.slug, run.run_id)
+    trial_dir = layout.trial_dir(experiment.slug, run.run_id, variant.slug, 1)
+    workspace = trial_dir / "workspace"
+
+    # 1. Workspace provisioned with a git baseline.
+    head = _git_head(workspace) if workspace.exists() else None
+    checks.append(
+        _check(
+            "workspace provisioned",
+            workspace.exists() and head is not None,
+            f"git baseline {head[:10]}" if head else "no workspace / git HEAD",
+        )
+    )
+
+    # 2. Session log captured and parseable.
+    events_path = trial_dir / "events.jsonl"
+    n_events = 0
+    if events_path.exists():
+        try:
+            n_events = len(load_events(events_path))
+        except Exception:  # pragma: no cover - defensive
+            n_events = 0
+    checks.append(
+        _check("session log captured", events_path.exists() and n_events >= 1, f"{n_events} events")
+    )
+
+    # 3. Metrics parsed from the session log.
+    metrics_path = trial_dir / "metrics.json"
+    n_turns = int(read_json(metrics_path).get("n_turns") or 0) if metrics_path.exists() else 0
+    checks.append(
+        _check("metrics parsed", metrics_path.exists() and n_turns >= 1, f"{n_turns} turns")
+    )
+
+    # 4. Session analysis written.
+    checks.append(_check("analysis written", (trial_dir / "analysis.json").exists()))
+
+    # 5. Workspace diff captured and non-empty -- this is what caught the MAX_PATH bug.
+    diff_path = trial_dir / "workspace.diff"
+    diff = diff_path.read_text(encoding="utf-8") if diff_path.exists() else ""
+    checks.append(
+        _check(
+            "workspace diff captured",
+            diff.strip() != "",
+            f"{len(diff)} bytes" if diff.strip() else "empty diff (invoker changed nothing?)",
+        )
+    )
+
+    # 6. Verification ran (we only assert it ran, not that it passed).
+    if experiment.task.verify:
+        checks.append(_check("verify ran", (trial_dir / "verify.json").exists()))
+
+    # 7. Run-level summary written.
+    checks.append(
+        _check(
+            "run summary written",
+            (run_dir / "summary.json").exists() and (run_dir / "summary.md").exists(),
+        )
+    )
+
+    # 8. Run recorded in the SQLite index.
+    indexed = False
+    if layout.index_db.exists():
+        conn = connect(layout.index_db)
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM runs WHERE run_id = ?", (run.run_id,)
+            ).fetchone()
+            indexed = row is not None
+        finally:
+            conn.close()
+    checks.append(_check("indexed", indexed))
+
+    return checks

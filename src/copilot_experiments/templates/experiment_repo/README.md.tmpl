@@ -17,22 +17,25 @@ results/            # collected run artifacts + SQLite index (gitignored)
 ```bash
 uv sync
 
-# dry-run the example (mock Copilot — validates plumbing, uses no credits)
+uv sync
+
+# validate the whole pipeline without spending credits (mock Copilot; persists nothing)
 uv run copilot-experiments run --dry-run
-uv run copilot-experiments show --last
 
 # run for real (requires an authenticated `copilot`, or BYOK env vars)
 uv run copilot-experiments run
+uv run copilot-experiments show --last
 
 # explore results
 uv run copilot-experiments list
 uv run copilot-experiments inspect <run-id> --variant <slug> --trial 1
 ```
 
-> A dry-run uses a mock that does **not** actually solve the task, so the example's
-> verification will report failure. Its purpose is to validate the end-to-end pipeline
-> (workspace provisioning, log collection, metrics, storage, indexing) without spending
-> Copilot credits. Run without `--dry-run` to measure real effectiveness.
+> `--dry-run` runs the whole pipeline with a mock Copilot inside a temp dir, checks each stage
+> produced its artifact (workspace, log, metrics, analysis, a non-empty diff, verify, summary,
+> index), then deletes everything — it persists nothing and uses no credits. The mock does
+> **not** solve the task, so it validates plumbing, not effectiveness; run without `--dry-run`
+> to capture real data to `show`, `analyze`, or `inspect`.
 
 ## Writing experiments
 

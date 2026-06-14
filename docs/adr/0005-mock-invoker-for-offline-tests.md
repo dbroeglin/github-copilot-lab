@@ -1,7 +1,14 @@
 # 0005. A MockInvoker keeps the harness offline-testable
 
-- **Status:** Accepted
+- **Status:** Accepted (amended by [ADR-0008](0008-dry-run-is-ephemeral-plumbing-check.md))
 - **Date:** 2026-06-14
+
+> **Amendment (ADR-0008):** the `--dry-run` behaviour described below changed. A dry-run is no
+> longer a persisted mock run; it is an *ephemeral, validating* plumbing check that runs in a
+> temp dir and deletes everything afterward. The consequences about "`--dry-run` is a faithful
+> smoke test" and "dry-runs produce meaningful analyses" are superseded — those analyses are now
+> validated and then discarded. The `MockInvoker` itself, and its role in offline testing, are
+> unchanged.
 
 ## Context
 

@@ -45,12 +45,12 @@ uv run copilot-experiments init my-experiments
 cd my-experiments
 uv sync
 
-# dry-run the example experiment (uses a mock Copilot — no credits required)
+# validate the whole pipeline without spending credits (mock Copilot; persists nothing)
 uv run copilot-experiments run --dry-run
-uv run copilot-experiments show --last
 
-# run for real (requires an authenticated `copilot`, or BYOK env vars)
+# run for real (requires an authenticated `copilot`, or BYOK env vars), then inspect it
 uv run copilot-experiments run
+uv run copilot-experiments show --last
 ```
 
 ### Try the bundled tracer bullet (no scaffolding)
@@ -59,7 +59,12 @@ A small, **multi-turn** example ships in this repo. From the repo root:
 
 ```bash
 uv sync
+
+# validate the pipeline end-to-end (mock Copilot, no credits, nothing saved)
 uv run copilot-experiments run     --root examples/tracer_bullet --dry-run
+
+# run it for real, then render the captured session log
+uv run copilot-experiments run     --root examples/tracer_bullet
 uv run copilot-experiments analyze --root examples/tracer_bullet --last
 ```
 
@@ -72,7 +77,7 @@ header, totals, a per-tool histogram, and a per-turn timeline. See
 | Command | Description |
 | --- | --- |
 | `init <dir>` | Scaffold a new standalone experiment repository. |
-| `run [name]` | Discover and run experiment(s) in `experiments/`; writes `results/` + index. |
+| `run [name]` | Discover and run experiment(s) in `experiments/`; writes `results/` + index. Add `--dry-run` to validate the whole pipeline in a temp dir and persist nothing. |
 | `list` | List experiments and past runs. |
 | `show <run-id>` / `show --last` | Print a run summary and per-variant comparison. |
 | `analyze <run-id>` / `analyze --last` / `analyze --file <events.jsonl>` | Render a rich overview of a session log (timeline, tools, tokens). |

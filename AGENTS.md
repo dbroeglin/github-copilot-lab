@@ -26,7 +26,8 @@ plus a [Typer](https://typer.tiangolo.com/) CLI. It is developed with [`uv`](htt
   - `sessionlog.py` — locates and parses Copilot's `events.jsonl` into `Metrics`.
   - `analysis.py` — derives a rendering-agnostic `SessionAnalysis` (tools, turns, tokens) from session events.
   - `render.py` — renders a `SessionAnalysis` to the terminal with Rich (backs the `analyze` command).
-  - `runner.py` — orchestration: variants × trials → result artifacts + index.
+  - `runner.py` — orchestration: variants × trials → result artifacts + index. Also
+    `dry_run_experiment()` (ephemeral, validating plumbing check that persists nothing).
   - `storage.py` — the `results/` filesystem `Layout` and run discovery.
   - `index.py` — the SQLite index (`results/index.db`) derived from the filesystem.
   - `report.py` — aggregation, `summary.json`, and `summary.md`.
@@ -46,8 +47,10 @@ plus a [Typer](https://typer.tiangolo.com/) CLI. It is developed with [`uv`](htt
   which mask `api_key` / `bearer_token`.
 - **Tests stay offline.** Anything exercising the runner uses `MockInvoker` (optionally with a
   `solver` callback) and a temp `--root`. Do not call the real Copilot CLI in tests.
-- **Dry-runs are isolated.** When `dry_run=True` and no explicit `session_state_root` is given,
-  synthetic events are written under the run dir, never into `~/.copilot/session-state`.
+- **Dry-runs are ephemeral.** `dry_run_experiment()` runs the whole pipeline with `MockInvoker`
+  in a `tempfile.mkdtemp()` dir (results + session state both redirected there), validates each
+  stage produced its artifact, then deletes the temp dir. Nothing is persisted under the repo;
+  `run_experiment()` has no `dry_run` parameter.
 - **Templates are data.** Files under `templates/experiment_repo/` are shipped as package data;
   `.tmpl` files are rendered with `{{placeholder}}` substitution and lose the suffix.
 

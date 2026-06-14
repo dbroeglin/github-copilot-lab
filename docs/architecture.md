@@ -83,8 +83,9 @@ copilot -p "<prompt>" --output-format json --session-id <uuid> \
 2. **Secrets are never stored.** `Variant.stored()` / `ProviderConfig.redacted()` mask keys.
 3. **Offline-testable.** `MockInvoker` simulates a run (synthetic `events.jsonl`), so the test
    suite and dry-runs need no Copilot credits or network.
-4. **Isolated dry-runs.** Dry-run session state is written under the run dir, not the global
-   `~/.copilot/session-state`.
+4. **Ephemeral dry-runs.** A `--dry-run` exercises the whole pipeline in a throwaway temp dir,
+   validates each stage's artifact, then deletes everything — no run is persisted under
+   `results/`. See [ADR-0008](adr/0008-dry-run-is-ephemeral-plumbing-check.md).
 5. **Analysis data is split from rendering.** `analysis.py` produces plain data; `render.py`
    (Rich) and the persisted `analysis.json` consume it, so a future web explorer can reuse the
    same model. See [ADR-0006](adr/0006-separate-analysis-data-from-rendering.md) and

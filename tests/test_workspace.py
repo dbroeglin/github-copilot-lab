@@ -9,14 +9,12 @@ the baseline and diff explicitly rather than trusting an empty string.
 
 from __future__ import annotations
 
-import os
-import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
+from copilot_experiments._util import force_rmtree
 from copilot_experiments.models import Task
 from copilot_experiments.workspace import WorkspaceError, capture_diff, provision
 
@@ -30,14 +28,6 @@ def _make_fixture(root: Path, name: str = "fix") -> str:
 
 def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True)
-
-
-def _force_rmtree(path: Path) -> None:
-    """Remove a tree that may contain >260-char paths (Windows MAX_PATH)."""
-    target = os.path.abspath(str(path))
-    if sys.platform == "win32":
-        target = "\\\\?\\" + target
-    shutil.rmtree(target, ignore_errors=True)
 
 
 def test_provision_copies_fixture(tmp_path: Path):
@@ -158,4 +148,4 @@ def test_provision_baseline_survives_deep_paths(tmp_path: Path):
     finally:
         # The deepest .git/objects paths exceed MAX_PATH, so a plain rmtree
         # (pytest's teardown) would fail to delete them.
-        _force_rmtree(first_seg)
+        force_rmtree(first_seg)

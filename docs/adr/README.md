@@ -24,3 +24,4 @@ We follow the lightweight format popularized by
 | [0005](0005-mock-invoker-for-offline-tests.md) | A MockInvoker keeps the harness offline-testable | Accepted |
 | [0006](0006-separate-analysis-data-from-rendering.md) | Separate analysis data from its rendering | Accepted |
 | [0007](0007-cli-rich-analysis-before-web-app.md) | Ship CLI (Rich) analysis first; defer the web explorer | Accepted |
+| [0008](0008-dry-run-is-ephemeral-plumbing-check.md) | `--dry-run` is an ephemeral, validating plumbing check | Accepted |

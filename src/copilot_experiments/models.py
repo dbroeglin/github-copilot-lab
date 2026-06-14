@@ -254,3 +254,30 @@ class ExperimentRun(BaseModel):
     git_base: str | None = None
     status: str = "running"
     variants: list[VariantResult] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
+# Dry-run (ephemeral plumbing check)
+# --------------------------------------------------------------------------- #
+class DryRunCheck(BaseModel):
+    """One validated stage of the run pipeline during a ``--dry-run``."""
+
+    name: str
+    ok: bool
+    detail: str = ""
+
+
+class DryRunReport(BaseModel):
+    """Result of an ephemeral dry-run: did each pipeline stage do its job?
+
+    A dry-run runs the whole pipeline (with the mock invoker) inside a throwaway
+    directory, records these checks, then deletes everything. Nothing is
+    persisted; only this report survives.
+    """
+
+    experiment: str
+    checks: list[DryRunCheck] = Field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return all(c.ok for c in self.checks)
