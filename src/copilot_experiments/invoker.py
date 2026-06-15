@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from . import pricing
 from ._util import iso, utcnow
 from .models import Variant
 from .sessionlog import events_path
@@ -251,26 +252,45 @@ class MockInvoker:
             },
         ]
 
+        out_total = 0
+        lines_added = 0
+        lines_removed = 0
         for i, (tool, text, ok) in enumerate(script):
             call_id = f"mock-{i}"
+            out_tok = 40 + 10 * i
+            out_total += out_tok
+            tele_metrics: dict = {
+                "durationMs": 50 + 25 * i,
+                "resultForLlmLength": 200 + 50 * i,
+                "resultLength": 260 + 50 * i,
+            }
+            if tool == "edit":
+                tele_metrics["linesAdded"] = 5
+                tele_metrics["linesRemoved"] = 2
+                lines_added += 5
+                lines_removed += 2
+            if tool == "powershell":
+                tele_metrics["exit_code"] = 0 if ok else 1
             events += [
                 {"type": "assistant.turn_start", "timestamp": at(),
                  "data": {"turnId": str(i)}},
                 {"type": "assistant.message", "timestamp": at(),
                  "data": {"model": model, "content": text, "turnId": str(i),
-                          "outputTokens": 40 + 10 * i,
+                          "outputTokens": out_tok,
                           "toolRequests": [{"toolCallId": call_id, "name": tool}]}},
                 {"type": "tool.execution_start", "timestamp": at(),
                  "data": {"toolCallId": call_id, "toolName": tool, "model": model,
                           "turnId": str(i)}},
                 {"type": "tool.execution_complete", "timestamp": at(),
-                 "data": {"toolCallId": call_id, "turnId": str(i), "success": ok}},
+                 "data": {"toolCallId": call_id, "turnId": str(i), "success": ok,
+                          "toolTelemetry": {"metrics": tele_metrics}}},
                 {"type": "assistant.turn_end", "timestamp": at(),
                  "data": {"turnId": str(i)}},
             ]
 
         # A closing turn with a final message and no tool call.
         final_turn = len(script)
+        out_total += 25
         events += [
             {"type": "assistant.turn_start", "timestamp": at(),
              "data": {"turnId": str(final_turn)}},
@@ -280,4 +300,93 @@ class MockInvoker:
             {"type": "assistant.turn_end", "timestamp": at(),
              "data": {"turnId": str(final_turn)}},
         ]
+
+        events += self._economics_events(model, at, out_total, lines_added, lines_removed)
         return events
+
+    @staticmethod
+    def _economics_events(
+        model: str,
+        at: Callable[[], str],
+        out_total: int,
+        lines_added: int,
+        lines_removed: int,
+    ) -> list[dict]:
+        """A self-consistent ``session.compaction_complete`` + ``session.shutdown`` pair.
+
+        Token counts are priced with :mod:`pricing`'s documented rates so the synthetic
+        ``totalNanoAiu`` reconciles exactly with the per-type decomposition -- exercising the full
+        economics path (including ``rates_from_compaction``) entirely offline.
+        """
+        rates = pricing.default_rates()
+        counts = {
+            "input": 1500,
+            "cache_read": 12_000,
+            "cache_write": 2_000,
+            "output": out_total,
+        }
+        reasoning_tokens = 120
+        total_nano = int(sum(counts[t] * rates[t] for t in pricing.TOKEN_TYPES))
+        input_billed = counts["input"] + counts["cache_read"] + counts["cache_write"]
+        n_requests = 4
+        return [
+            {
+                "type": "session.compaction_complete",
+                "timestamp": at(),
+                "data": {
+                    "compactionTokensUsed": {
+                        "copilotUsage": {
+                            "totalNanoAiu": 5_000_000,
+                            "tokenDetails": [
+                                {
+                                    "tokenType": t,
+                                    "tokenCount": counts.get(t, 0),
+                                    "batchSize": 1_000_000,
+                                    "costPerBatch": pricing.DEFAULT_COST_PER_BATCH[t],
+                                }
+                                for t in pricing.TOKEN_TYPES
+                            ],
+                        }
+                    },
+                    "systemTokens": 9000,
+                    "conversationTokens": 4000,
+                    "toolDefinitionsTokens": 3000,
+                },
+            },
+            {
+                "type": "session.shutdown",
+                "timestamp": at(),
+                "data": {
+                    "tokenDetails": {
+                        "input": {"tokenCount": counts["input"]},
+                        "cache_read": {"tokenCount": counts["cache_read"]},
+                        "cache_write": {"tokenCount": counts["cache_write"]},
+                        "output": {"tokenCount": counts["output"]},
+                    },
+                    "totalNanoAiu": total_nano,
+                    "totalApiDurationMs": 1234 * n_requests,
+                    "modelMetrics": {
+                        model: {
+                            "requests": {"count": n_requests},
+                            "usage": {
+                                "inputTokens": input_billed,
+                                "outputTokens": counts["output"],
+                                "cacheReadTokens": counts["cache_read"],
+                                "cacheWriteTokens": counts["cache_write"],
+                                "reasoningTokens": reasoning_tokens,
+                            },
+                            "totalNanoAiu": total_nano,
+                        }
+                    },
+                    "systemTokens": 9000,
+                    "conversationTokens": 4000,
+                    "toolDefinitionsTokens": 3000,
+                    "currentTokens": 16000,
+                    "codeChanges": {
+                        "filesModified": ["mock_file.py"],
+                        "linesAdded": lines_added,
+                        "linesRemoved": lines_removed,
+                    },
+                },
+            },
+        ]

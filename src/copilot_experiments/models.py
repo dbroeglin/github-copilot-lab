@@ -162,8 +162,74 @@ class Experiment(BaseModel):
 # --------------------------------------------------------------------------- #
 # Result objects
 # --------------------------------------------------------------------------- #
+class ModelMetric(BaseModel):
+    """Per-model usage from ``session.shutdown.modelMetrics`` (multi-model sessions)."""
+
+    model: str
+    requests: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    reasoning_tokens: int = 0
+    aiu: float | None = None
+
+
+class TokenEconomics(BaseModel):
+    """Session-level token accounting and AIU cost.
+
+    Parsed from ``session.shutdown`` (authoritative totals) plus ``session.compaction_*`` and
+    ``session.truncation`` events. Every field is best-effort: a session that never emitted a
+    ``session.shutdown`` (e.g. aborted) leaves the totals ``None``. Cost is expressed in **AIU**
+    (GitHub's billing unit; ``totalNanoAiu / 1e9``). Premium requests are intentionally ignored
+    (GitHub stopped using them on 2026-06-01).
+    """
+
+    # Token-type decomposition (the paper's taxonomy).
+    input_tokens_noncached: int | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    output_tokens: int | None = None
+    reasoning_tokens: int | None = None
+    input_tokens_total: int | None = None
+    total_tokens: int | None = None
+
+    # Cost (AIU).
+    aiu: float | None = None
+    aiu_by_type: dict[str, float] = Field(default_factory=dict)
+
+    # Throughput.
+    api_duration_ms: int | None = None
+    n_requests: int | None = None
+
+    # Context-window composition at end of session.
+    system_tokens: int | None = None
+    tool_definitions_tokens: int | None = None
+    conversation_tokens: int | None = None
+    context_tokens: int | None = None
+    peak_context_tokens: int | None = None
+
+    # Context-management dynamics.
+    n_compactions: int = 0
+    n_truncations: int = 0
+    compaction_aiu: float | None = None
+    tokens_removed_truncation: int | None = None
+
+    # Productivity / effectiveness.
+    files_modified: int | None = None
+    lines_added: int | None = None
+    lines_removed: int | None = None
+
+    # Per-model split.
+    model_metrics: list[ModelMetric] = Field(default_factory=list)
+
+
 class Metrics(BaseModel):
-    """Metrics parsed from a single trial's session ``events.jsonl``."""
+    """Metrics parsed from a single trial's session ``events.jsonl``.
+
+    Flat scalars for aggregation and the SQLite index. The richer, nested view lives in
+    :class:`TokenEconomics` on :class:`SessionAnalysis`; both are derived from the same events.
+    """
 
     n_turns: int = 0
     n_assistant_messages: int = 0
@@ -176,13 +242,45 @@ class Metrics(BaseModel):
     output_tokens: int | None = None
     total_tokens: int | None = None
 
+    # Token-type decomposition and AIU cost (from session.shutdown; may be null).
+    input_tokens_noncached: int | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    reasoning_tokens: int | None = None
+    aiu: float | None = None
+    aiu_by_type: dict[str, float] = Field(default_factory=dict)
+    api_duration_ms: int | None = None
+    n_requests: int | None = None
+
+    # Context composition and dynamics.
+    system_tokens: int | None = None
+    tool_definitions_tokens: int | None = None
+    conversation_tokens: int | None = None
+    context_tokens: int | None = None
+    peak_context_tokens: int | None = None
+    n_compactions: int = 0
+    n_truncations: int = 0
+    compaction_aiu: float | None = None
+
+    # Productivity (from session.shutdown.codeChanges).
+    files_modified: int | None = None
+    lines_added: int | None = None
+    lines_removed: int | None = None
+
 
 class ToolStat(BaseModel):
-    """How often a single tool was invoked in a session, and how often it failed."""
+    """How often a single tool was invoked in a session, and how often it failed.
+
+    ``total_duration_ms`` and ``total_result_chars`` aggregate ``toolTelemetry.metrics``
+    (per-tool latency and the size of the result fed back to the model -- a proxy for the
+    input-token cost each tool injects into subsequent requests).
+    """
 
     name: str
     calls: int = 0
     failures: int = 0
+    total_duration_ms: int = 0
+    total_result_chars: int = 0
 
 
 class TurnSummary(BaseModel):
@@ -232,6 +330,9 @@ class SessionAnalysis(BaseModel):
     input_tokens: int | None = None
     output_tokens: int | None = None
     total_tokens: int | None = None
+
+    # Token-type decomposition, AIU cost, context composition/dynamics, and productivity.
+    economics: TokenEconomics = Field(default_factory=TokenEconomics)
 
     # Breakdowns.
     tools: list[ToolStat] = Field(default_factory=list)

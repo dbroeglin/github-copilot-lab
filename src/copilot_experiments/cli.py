@@ -481,6 +481,8 @@ def _print_run_summary(summary: dict) -> None:
     table.add_column("tool calls", justify="right")
     table.add_column("tool fails", justify="right")
     table.add_column("tokens", justify="right")
+    table.add_column("AIU", justify="right")
+    table.add_column("AIU/solve", justify="right")
     for v in summary["variants"]:
         vsr = v.get("success_rate")
         table.add_row(
@@ -495,8 +497,22 @@ def _print_run_summary(summary: dict) -> None:
             _num(v.get("avg_tool_calls")),
             _num(v.get("avg_tool_failures")),
             _num(v.get("avg_total_tokens")),
+            _aiu(v.get("avg_aiu")),
+            _aiu(v.get("aiu_per_solve")),
         )
+    total_aiu = summary.get("total_aiu")
+    if total_aiu is not None:
+        console.print(table)
+        console.print(f"[dim]total cost:[/dim] {_aiu(total_aiu)} AIU")
+        return
     console.print(table)
+
+
+def _aiu(value: object) -> str:
+    if value is None:
+        return "-"
+    val = float(value)
+    return f"{val:.3f}" if val < 1 else f"{val:,.2f}"
 
 
 def _num(value: object) -> str:

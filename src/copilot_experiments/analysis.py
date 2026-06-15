@@ -26,6 +26,7 @@ import datetime as _dt
 from typing import Any
 
 from .models import SessionAnalysis, ToolStat, TurnSummary
+from .sessionlog import extract_economics
 
 _PREVIEW_LEN = 120
 
@@ -140,6 +141,17 @@ def analyze_events(events: list[dict[str, Any]]) -> SessionAnalysis:
             if data.get("success") is False:
                 stat.failures += 1
                 analysis.n_tool_failures += 1
+            tele = (data.get("toolTelemetry") or {}).get("metrics") or {}
+            duration = tele.get("durationMs")
+            if isinstance(duration, (int, float)):
+                stat.total_duration_ms += int(duration)
+            chars = (
+                tele.get("resultForLlmLength")
+                or tele.get("resultLength")
+                or tele.get("result_length")
+            )
+            if isinstance(chars, (int, float)):
+                stat.total_result_chars += int(chars)
 
         elif etype == "assistant.turn_end":
             if current is not None:
@@ -163,7 +175,14 @@ def analyze_events(events: list[dict[str, Any]]) -> SessionAnalysis:
     analysis.turns = turns
     analysis.tools = sorted(tool_stats.values(), key=lambda s: (-s.calls, s.name))
 
-    if saw_tokens:
+    analysis.economics = extract_economics(events)
+    econ = analysis.economics
+    if econ.total_tokens is not None:
+        # session.shutdown is authoritative when present.
+        analysis.input_tokens = econ.input_tokens_total
+        analysis.output_tokens = econ.output_tokens
+        analysis.total_tokens = econ.total_tokens
+    elif saw_tokens:
         analysis.output_tokens = out_tokens or None
         analysis.input_tokens = in_tokens or None
         analysis.total_tokens = (in_tokens + out_tokens) or None

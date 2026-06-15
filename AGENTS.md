@@ -23,8 +23,11 @@ plus a [Typer](https://typer.tiangolo.com/) CLI. It is developed with [`uv`](htt
     real CLI; `MockInvoker` simulates a run (used by dry-runs and the test suite).
   - `workspace.py` — provisions an isolated per-trial workspace (copy a fixture or `git clone`),
     commits a git baseline, and captures a diff of Copilot's changes.
-  - `sessionlog.py` — locates and parses Copilot's `events.jsonl` into `Metrics`.
-  - `analysis.py` — derives a rendering-agnostic `SessionAnalysis` (tools, turns, tokens) from session events.
+  - `sessionlog.py` — locates and parses Copilot's `events.jsonl` into `Metrics`; `extract_economics()`
+    pulls token-type counts + AIU cost from `session.shutdown`.
+  - `pricing.py` — AIU↔token cost math: documented per-token-type `costPerBatch` defaults, live-rate
+    reading from `session.compaction_complete`, and the per-type AIU decomposition.
+  - `analysis.py` — derives a rendering-agnostic `SessionAnalysis` (tools, turns, tokens, economics) from session events.
   - `render.py` — renders a `SessionAnalysis` to the terminal with Rich (backs the `analyze` command).
   - `runner.py` — orchestration: variants × trials → result artifacts + index. Also
     `dry_run_experiment()` (ephemeral, validating plumbing check that persists nothing).

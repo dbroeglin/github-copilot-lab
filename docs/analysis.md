@@ -29,17 +29,28 @@ uv run copilot-experiments analyze --file path/to/events.jsonl
 uv run copilot-experiments analyze --last --max-turns 15
 ```
 
-The rendering (built with [Rich](https://rich.readthedocs.io/)) has four parts:
+The rendering (built with [Rich](https://rich.readthedocs.io/)) has these parts:
 
 1. **Header** — session id, model(s), reasoning effort, repo/branch, Copilot version, start
    time, and wall-clock duration.
 2. **Totals** — turns, user/assistant messages, tool calls, tool failures, warnings, hooks,
    tokens, and total event count.
-3. **Tool usage** — a histogram of how often each tool was invoked and how often it failed.
-4. **Timeline** — one row per assistant turn: time, duration, output tokens, the tools invoked
+3. **Tool usage** — a histogram of how often each tool was invoked and how often it failed,
+   plus the total wall-clock time it spent (`dur`) and the size of the results it fed back to the
+   model (`ctx`, from `toolTelemetry.metrics` — a proxy for the input-token cost each tool injects).
+4. **Token economics** — *only when the log carries a `session.shutdown`*. A **Cost (AIU)** table
+   decomposing spend across the four token types (input / cache-read / cache-write / output) with
+   each type's token count and share of cost, plus a **Session economics** table (requests, API
+   time, ms/request, current & peak context, system/tool-definition tokens, compactions,
+   truncations, files modified, lines ±, AIU per line). Multi-model sessions also get a per-model
+   table. See [ADR-0011](adr/0011-token-economics-from-session-shutdown.md).
+5. **Timeline** — one row per assistant turn: time, duration, output tokens, the tools invoked
    in that turn, and a preview of what the assistant said.
 
 Warnings, if any, are shown in a panel at the bottom.
+
+> **Cost is measured in AIU** (GitHub's billing unit; `totalNanoAiu / 1e9`). Premium requests are
+> ignored — GitHub stopped using them on 2026-06-01.
 
 ## The `SessionAnalysis` model
 
@@ -56,11 +67,36 @@ stored `analysis.json`, and any future consumer.
 | `n_turns`, `n_user_messages`, `n_assistant_messages` | Conversation counts. |
 | `n_tool_calls`, `n_tool_failures` | Tool execution counts (failures correlated by `toolCallId`). |
 | `n_warnings`, `n_hooks`, `n_events` | Other counts. |
-| `input_tokens`, `output_tokens`, `total_tokens` | Token usage when the log exposes it. |
-| `tools` | `ToolStat(name, calls, failures)`, sorted by calls desc. |
+| `input_tokens`, `output_tokens`, `total_tokens` | Token usage (authoritative from `session.shutdown` when present). |
+| `economics` | `TokenEconomics`: token-type split, AIU cost, context composition, productivity (see below). |
+| `tools` | `ToolStat(name, calls, failures, total_duration_ms, total_result_chars)`, sorted by calls desc. |
 | `turns` | `TurnSummary(turn_no, duration_s, tools, output_tokens, text_preview, …)`. |
 | `warnings` | Warning messages. |
 | `event_type_counts` | Histogram of raw event `type`s. |
+
+### `TokenEconomics`
+
+Parsed by `extract_economics(events)` from `session.shutdown` (authoritative; summed across
+multiple shutdowns when a session was resumed) plus `session.compaction_*` / `session.truncation`.
+Every field is best-effort — a session with no shutdown leaves the totals `null`.
+
+| Field | Meaning |
+| --- | --- |
+| `input_tokens_noncached`, `cache_read_tokens`, `cache_write_tokens`, `output_tokens` | The four metered token types. |
+| `reasoning_tokens` | Reasoning tokens (a subset of output). |
+| `input_tokens_total`, `total_tokens` | Billed input (non-cached + cache read + cache write) and the grand total. |
+| `aiu`, `aiu_by_type` | Total AIU cost and its decomposition across token types (sums to `aiu`). |
+| `api_duration_ms`, `n_requests` | Model API wall-clock and request count. |
+| `system_tokens`, `tool_definitions_tokens`, `conversation_tokens`, `context_tokens` | End-of-session context-window composition. |
+| `peak_context_tokens` | Largest context observed (from compaction/truncation pre-sizes). |
+| `n_compactions`, `n_truncations`, `compaction_aiu`, `tokens_removed_truncation` | Context-management dynamics and their cost. |
+| `files_modified`, `lines_added`, `lines_removed` | Productivity, from `codeChanges`. |
+| `model_metrics` | Per-model `ModelMetric(requests, input/output/cache/reasoning tokens, aiu)`. |
+
+The AIU math lives in [`pricing.py`](../src/copilot_experiments/pricing.py): it reads live
+per-token-type rates from `session.compaction_complete` (`costPerBatch`) when available, falls back
+to documented defaults otherwise, and normalises the split so it always sums to the authoritative
+`totalNanoAiu`. See [ADR-0011](adr/0011-token-economics-from-session-shutdown.md).
 
 ## How the session log is read
 
@@ -74,9 +110,12 @@ analysis relies on:
 | `assistant.turn_start` / `assistant.turn_end` | Turn boundaries (and per-turn duration via `turnId`). |
 | `assistant.message` | `model`, `content` (preview), `toolRequests`, `outputTokens`. |
 | `tool.execution_start` | `toolName` ↔ `toolCallId` mapping; per-turn tool order. |
-| `tool.execution_complete` | `success` (correlated back to the tool via `toolCallId`). |
+| `tool.execution_complete` | `success` (correlated back to the tool via `toolCallId`); `toolTelemetry.metrics.{durationMs,resultForLlmLength}` for per-tool latency and context size. |
 | `session.warning` | Warning messages. |
 | `hook.start` | Hook count. |
+| `session.shutdown` | **Authoritative token economics:** `tokenDetails` per type, `totalNanoAiu`, `totalApiDurationMs`, `modelMetrics`, context composition, `codeChanges`. |
+| `session.compaction_complete` | Live per-token AIU rates (`costPerBatch`), compaction cost, and context peak. |
+| `session.truncation` | Truncation count, tokens removed, context peak. |
 
 Parsing is defensive: unknown event types are counted but otherwise ignored, and missing
 fields degrade to "unknown" rather than raising. Because the raw `events.jsonl` is always
