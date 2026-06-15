@@ -38,6 +38,26 @@ def _dur(seconds: float | None) -> str:
     return f"{minutes}m{secs:02d}s"
 
 
+def _int(value: int | None) -> str:
+    return "-" if value is None else f"{value:,}"
+
+
+def _kchars(chars: int | None) -> str:
+    if not chars:
+        return "-"
+    if chars < 1000:
+        return str(chars)
+    return f"{chars / 1000:.1f}k"
+
+
+def _aiu(value: float | None) -> str:
+    if value is None:
+        return "-"
+    if value < 1:
+        return f"{value:.3f}"
+    return f"{value:,.2f}"
+
+
 def _header_panel(a: SessionAnalysis, title: str | None) -> Panel:
     grid = Table.grid(padding=(0, 2))
     grid.add_column(style="dim", justify="right")
@@ -91,11 +111,15 @@ def _tools_table(a: SessionAnalysis) -> Table:
     table.add_column("tool")
     table.add_column("calls", justify="right")
     table.add_column("fails", justify="right")
+    table.add_column("dur", justify="right")
+    table.add_column("ctx", justify="right")
     if not a.tools:
-        table.add_row("[dim]none[/dim]", "-", "-")
+        table.add_row("[dim]none[/dim]", "-", "-", "-", "-")
     for tool in a.tools:
         fails = f"[red]{tool.failures}[/red]" if tool.failures else "0"
-        table.add_row(tool.name, str(tool.calls), fails)
+        dur = _dur(tool.total_duration_ms / 1000) if tool.total_duration_ms else "-"
+        ctx = _kchars(tool.total_result_chars) if tool.total_result_chars else "-"
+        table.add_row(tool.name, str(tool.calls), fails, dur, ctx)
     return table
 
 
@@ -130,6 +154,67 @@ def _timeline_table(a: SessionAnalysis, max_turns: int = 0) -> Table:
     return table
 
 
+def _economics_renderables(a: SessionAnalysis) -> list[Table]:
+    """Cost, token-type split, context and productivity tables (omitted when no shutdown)."""
+    e = a.economics
+    if e.total_tokens is None and e.aiu is None:
+        return []
+
+    cost = Table(title="Cost (AIU)", title_justify="left", show_edge=False, expand=False)
+    cost.add_column("token type", style="dim")
+    cost.add_column("tokens", justify="right")
+    cost.add_column("AIU", justify="right")
+    cost.add_column("%", justify="right")
+    total_aiu = e.aiu or 0.0
+    by_type = e.aiu_by_type or {}
+    type_tokens = {
+        "input": e.input_tokens_noncached,
+        "cache_read": e.cache_read_tokens,
+        "cache_write": e.cache_write_tokens,
+        "output": e.output_tokens,
+    }
+    for ttype in ("input", "cache_read", "cache_write", "output"):
+        aiu = by_type.get(ttype)
+        share = f"{aiu / total_aiu * 100:.0f}%" if aiu and total_aiu else "-"
+        cost.add_row(ttype, _int(type_tokens.get(ttype)), _aiu(aiu), share)
+    cost.add_row("[bold]total[/bold]", _int(e.total_tokens), f"[bold]{_aiu(e.aiu)}[/bold]", "")
+    if e.reasoning_tokens:
+        cost.add_row("[dim]reasoning[/dim]", _int(e.reasoning_tokens), "[dim](in output)[/dim]", "")
+
+    facts = Table(title="Session economics", title_justify="left", show_edge=False, expand=False)
+    facts.add_column("metric", style="dim")
+    facts.add_column("value", justify="right")
+    facts.add_row("requests", _int(e.n_requests))
+    facts.add_row("api time", _dur(e.api_duration_ms / 1000) if e.api_duration_ms else "-")
+    if e.n_requests and e.api_duration_ms:
+        facts.add_row("ms / request", f"{e.api_duration_ms / e.n_requests:,.0f}")
+    facts.add_row("context (cur)", _int(e.context_tokens))
+    facts.add_row("context (peak)", _int(e.peak_context_tokens))
+    facts.add_row("system / tools", f"{_int(e.system_tokens)} / {_int(e.tool_definitions_tokens)}")
+    facts.add_row("compactions", str(e.n_compactions))
+    facts.add_row("truncations", str(e.n_truncations))
+    if e.files_modified is not None:
+        facts.add_row("files modified", str(e.files_modified))
+        facts.add_row("lines +/-", f"+{e.lines_added or 0} / -{e.lines_removed or 0}")
+        if total_aiu and e.lines_added:
+            facts.add_row("AIU / line added", f"{total_aiu / e.lines_added:.3f}")
+
+    tables = [cost, facts]
+    if len(e.model_metrics) > 1:
+        models = Table(title="Per model", title_justify="left", show_edge=False, expand=False)
+        models.add_column("model", style="dim")
+        models.add_column("req", justify="right")
+        models.add_column("in", justify="right")
+        models.add_column("out", justify="right")
+        models.add_column("AIU", justify="right")
+        for m in e.model_metrics:
+            models.add_row(
+                m.model, str(m.requests), _int(m.input_tokens), _int(m.output_tokens), _aiu(m.aiu)
+            )
+        tables.append(models)
+    return tables
+
+
 def render_session_analysis(
     analysis: SessionAnalysis,
     console: Console,
@@ -141,6 +226,10 @@ def render_session_analysis(
     console.print(_header_panel(analysis, title))
     console.print()
     console.print(Columns([_totals_table(analysis), _tools_table(analysis)], padding=(0, 4)))
+    econ = _economics_renderables(analysis)
+    if econ:
+        console.print()
+        console.print(Columns(econ, padding=(0, 4)))
     console.print()
     console.print(_timeline_table(analysis, max_turns=max_turns))
     if analysis.warnings:

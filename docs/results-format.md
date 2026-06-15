@@ -53,7 +53,17 @@ Parsed from `events.jsonl`:
 | `n_warnings` | `session.warning` events. |
 | `models` | Distinct models observed (model changes + per-event model). |
 | `duration_s` | Wall-clock span between first and last event. |
-| `input_tokens` / `output_tokens` / `total_tokens` | Token usage **if present** in the events (probed defensively; may be `null`). |
+| `input_tokens` / `output_tokens` / `total_tokens` | Token usage. Authoritative from `session.shutdown` when present; otherwise probed defensively and may be `null`. |
+| `input_tokens_noncached` / `cache_read_tokens` / `cache_write_tokens` / `reasoning_tokens` | Token-type decomposition from `session.shutdown` (may be `null`). |
+| `aiu` / `aiu_by_type` | Total cost in **AIU** (`totalNanoAiu / 1e9`) and its per-token-type split. Premium requests are ignored (deprecated 2026-06-01). |
+| `api_duration_ms` / `n_requests` | Model API wall-clock and request count. |
+| `system_tokens` / `tool_definitions_tokens` / `conversation_tokens` / `context_tokens` / `peak_context_tokens` | Context-window composition and peak. |
+| `n_compactions` / `n_truncations` / `compaction_aiu` | Context-management dynamics and their AIU cost. |
+| `files_modified` / `lines_added` / `lines_removed` | Productivity, from `session.shutdown.codeChanges`. |
+
+The richer nested view (per-model split, etc.) lives in `analysis.json`'s `economics` object;
+see [`docs/analysis.md`](analysis.md). The AIU math and its rationale are in
+[ADR-0011](adr/0011-token-economics-from-session-shutdown.md).
 
 ### `verify.json`
 `{ "command", "exit_code", "success", "output" }`. `success` is `exit_code == 0`. Absent when the
@@ -77,7 +87,10 @@ experiments(slug PK, name, description, first_seen)
 runs(run_id PK, experiment_slug, started_at, finished_at, git_base, n_variants, status)
 variants(id PK, run_id, variant_slug, model, reasoning_effort, agent, mode, byok, params_json)
 trials(id PK, run_id, variant_slug, trial_no, session_id, exit_code, duration_s, success,
-       n_turns, n_tool_calls, n_tool_failures, input_tokens, output_tokens, total_tokens, model)
+       n_turns, n_tool_calls, n_tool_failures, input_tokens, output_tokens, total_tokens,
+       cache_read_tokens, cache_write_tokens, input_tokens_noncached, reasoning_tokens,
+       aiu, api_duration_ms, n_requests, peak_context_tokens, n_compactions, n_truncations,
+       files_modified, lines_added, lines_removed, model)
 ```
 
 Rebuild it any time:
@@ -104,6 +117,17 @@ FROM trials
 WHERE total_tokens IS NOT NULL
 ORDER BY total_tokens DESC
 LIMIT 10;
+
+-- Cost & variability per variant, and where the tokens go (AIU economics):
+SELECT variant_slug,
+       AVG(aiu)                      AS avg_aiu,
+       AVG(cache_write_tokens)       AS avg_cache_write,   -- often the priciest slice
+       AVG(output_tokens)            AS avg_output,
+       AVG(peak_context_tokens)      AS avg_peak_ctx,
+       SUM(aiu) / NULLIF(SUM(success), 0) AS aiu_per_solve  -- cost vs. accuracy
+FROM trials
+WHERE aiu IS NOT NULL
+GROUP BY variant_slug;
 ```
 
 ## Secret handling

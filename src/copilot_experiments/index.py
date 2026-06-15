@@ -55,6 +55,19 @@ CREATE TABLE IF NOT EXISTS trials (
     input_tokens    INTEGER,
     output_tokens   INTEGER,
     total_tokens    INTEGER,
+    cache_read_tokens     INTEGER,
+    cache_write_tokens    INTEGER,
+    input_tokens_noncached INTEGER,
+    reasoning_tokens      INTEGER,
+    aiu             REAL,
+    api_duration_ms INTEGER,
+    n_requests      INTEGER,
+    peak_context_tokens   INTEGER,
+    n_compactions   INTEGER,
+    n_truncations   INTEGER,
+    files_modified  INTEGER,
+    lines_added     INTEGER,
+    lines_removed   INTEGER,
     model           TEXT
 );
 """
@@ -125,7 +138,11 @@ def index_run_dir(conn: sqlite3.Connection, run_dir: Path) -> None:
             conn.execute(
                 "INSERT INTO trials(run_id, variant_slug, trial_no, session_id, exit_code, "
                 "duration_s, success, n_turns, n_tool_calls, n_tool_failures, input_tokens, "
-                "output_tokens, total_tokens, model) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "output_tokens, total_tokens, cache_read_tokens, cache_write_tokens, "
+                "input_tokens_noncached, reasoning_tokens, aiu, api_duration_ms, n_requests, "
+                "peak_context_tokens, n_compactions, n_truncations, files_modified, lines_added, "
+                "lines_removed, model) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     run_id,
                     vslug,
@@ -140,6 +157,19 @@ def index_run_dir(conn: sqlite3.Connection, run_dir: Path) -> None:
                     m.get("input_tokens"),
                     m.get("output_tokens"),
                     m.get("total_tokens"),
+                    m.get("cache_read_tokens"),
+                    m.get("cache_write_tokens"),
+                    m.get("input_tokens_noncached"),
+                    m.get("reasoning_tokens"),
+                    m.get("aiu"),
+                    m.get("api_duration_ms"),
+                    m.get("n_requests"),
+                    m.get("peak_context_tokens"),
+                    m.get("n_compactions"),
+                    m.get("n_truncations"),
+                    m.get("files_modified"),
+                    m.get("lines_added"),
+                    m.get("lines_removed"),
                     models[-1] if models else v.get("model"),
                 ),
             )
