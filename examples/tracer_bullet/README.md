@@ -39,6 +39,11 @@ different model (e.g. `claude-haiku-4.5`), or set `DEFAULT_MODEL = None` to use 
 model your CLI is configured with. A typical run solves the task in well under a minute of
 model time for a few AIU — the `analyze` view then shows exactly where those credits went.
 
+> Note: with a reasoning model like `gpt-5-mini`, the `analyze` timeline's "assistant said"
+> column is blank on most turns — the model goes straight to a tool call without narrating, and
+> keeps its reasoning encrypted. That is expected and does not affect any metric; the `tools`
+> column still shows what each turn did. See [`docs/analysis.md`](../../docs/analysis.md).
+
 ## What gets captured
 
 Each trial writes a self-describing folder under `results/` (git-ignored), including the

@@ -49,6 +49,17 @@ The rendering (built with [Rich](https://rich.readthedocs.io/)) has these parts:
 
 Warnings, if any, are shown in a panel at the bottom.
 
+> **A blank "assistant said" is normal — it is not a missing-data bug.** Many turns invoke a
+> tool without any accompanying prose, so the assistant text is genuinely empty and the row
+> shows only the tool it called. *Reasoning* models (e.g. OpenAI's `gpt-5*` family) do this on
+> almost every turn and additionally keep their chain-of-thought in encrypted fields
+> (`reasoningOpaque` / `encryptedContent`) that are not human-readable by design; chattier
+> models (e.g. Claude) narrate alongside most tool calls. This is a property of the model, not
+> of the harness, and it does **not** affect any measured metric — token counts and AIU come
+> from `session.shutdown`, and the `tools` column still shows what each turn did. We
+> deliberately do **not** force readable output on (e.g. via `--enable-reasoning-summaries`),
+> because emitting extra text would perturb the very token economics we measure.
+
 > **Cost is measured in AIU** (GitHub's billing unit; `totalNanoAiu / 1e9`). Premium requests are
 > ignored — GitHub stopped using them on 2026-06-01.
 
