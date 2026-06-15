@@ -31,6 +31,14 @@ uv run copilot-experiments analyze --root examples/tracer_bullet --last
 uv run copilot-experiments show    --root examples/tracer_bullet --last
 ```
 
+The real run is deliberately **cheap**: it pins one of the cheapest Copilot models
+(`gpt-5-mini`) at `low` reasoning effort rather than inheriting your (possibly expensive)
+account default. Change the `DEFAULT_MODEL` / `DEFAULT_EFFORT` constants at the top of
+[`experiments/textstats_experiment.py`](experiments/textstats_experiment.py) to try a
+different model (e.g. `claude-haiku-4.5`), or set `DEFAULT_MODEL = None` to use whatever
+model your CLI is configured with. A typical run solves the task in well under a minute of
+model time for a few AIU — the `analyze` view then shows exactly where those credits went.
+
 ## What gets captured
 
 Each trial writes a self-describing folder under `results/` (git-ignored), including the
