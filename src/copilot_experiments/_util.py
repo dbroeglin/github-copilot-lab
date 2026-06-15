@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import os
 import re
+import shutil
+import stat
+import sys
 import uuid
 from pathlib import Path
 from typing import Any
@@ -49,3 +53,28 @@ def read_json(path: Path) -> Any:
 def write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def force_rmtree(path: Path) -> None:
+    """Recursively delete ``path``, tolerating Windows quirks.
+
+    Two things routinely defeat a plain :func:`shutil.rmtree` on Windows when the
+    tree contains a git workspace: paths under ``.git/objects`` can exceed the
+    260-char ``MAX_PATH`` limit, and git marks object/pack files read-only. We
+    prepend the ``\\\\?\\`` long-path prefix and, on error, clear the read-only
+    bit and retry, so an ephemeral dry-run can always remove its temp dir.
+    """
+    if not path.exists():
+        return
+    target = os.path.abspath(str(path))
+    if sys.platform == "win32" and not target.startswith("\\\\?\\"):
+        target = "\\\\?\\" + target
+
+    def _on_error(func: Any, p: str, _exc: Any) -> None:
+        try:
+            os.chmod(p, stat.S_IWRITE)
+            func(p)
+        except OSError:
+            pass
+
+    shutil.rmtree(target, onerror=_on_error)

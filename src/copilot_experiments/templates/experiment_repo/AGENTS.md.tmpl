@@ -15,7 +15,8 @@ This repository contains **GitHub Copilot research experiments** built with the
 1. Add a fixture under `fixtures/` (a self-contained workspace).
 2. Create `experiments/<name>.py` defining a `Task` (prompt, `fixture`, optional `setup`
    and `verify`) and a list of `Variant`s (model / reasoning_effort / agent / BYOK matrix).
-3. Validate with a dry-run: `uv run copilot-experiments run --dry-run`.
+3. Validate with a dry-run: `uv run copilot-experiments run --dry-run` (runs the whole
+   pipeline in a temp dir, checks each stage, and persists nothing).
 
 ## Conventions
 - Keep prompts and fixtures deterministic and self-contained.

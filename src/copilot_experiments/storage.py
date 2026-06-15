@@ -30,14 +30,21 @@ from pathlib import Path
 
 
 class Layout:
-    """Resolves the standard result paths for an experiment repository."""
+    """Resolves the standard result paths for an experiment repository.
 
-    def __init__(self, root: Path) -> None:
+    ``root`` is where the experiment definitions and fixtures live. ``results_root``
+    is where run artifacts are *written*; it defaults to ``root/results`` but can be
+    pointed elsewhere (e.g. a throwaway temp dir for an ephemeral dry-run) so that
+    reading fixtures and writing results are decoupled.
+    """
+
+    def __init__(self, root: Path, *, results_root: Path | None = None) -> None:
         self.root = Path(root)
+        self._results_root = Path(results_root) if results_root is not None else None
 
     @property
     def results_dir(self) -> Path:
-        return self.root / "results"
+        return self._results_root if self._results_root is not None else self.root / "results"
 
     @property
     def index_db(self) -> Path:

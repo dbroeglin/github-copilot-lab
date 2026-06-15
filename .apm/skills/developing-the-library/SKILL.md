@@ -31,8 +31,10 @@ run_experiment() → results/<exp>/<run-id>/ + results/index.db
 
 ## Testing recipe
 - Unit-test pure functions directly (models, sessionlog, storage, scaffold).
-- For the runner, call `run_experiment(exp, root=tmp, dry_run=True)` for the plumbing path, and
-  `run_experiment(exp, root=tmp, invoker=MockInvoker(solver=...))` for a success path.
+- For the runner, call `run_experiment(exp, root=tmp, invoker=MockInvoker())` for a persisted
+  mock path, `run_experiment(exp, root=tmp, invoker=MockInvoker(solver=...))` for a success
+  path, and `dry_run_experiment(exp, root=tmp)` to exercise the ephemeral validating dry-run
+  (returns a `DryRunReport`, persists nothing).
 - Build synthetic `events.jsonl` dicts to test `parse_metrics` without any Copilot run.
 
 ## Verify before done

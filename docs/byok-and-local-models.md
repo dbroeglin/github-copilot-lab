@@ -37,6 +37,8 @@ variant = Variant(name="local-qwen", model="qwen2.5-coder:7b", provider=ollama)
 | `max_output_tokens` | `COPILOT_PROVIDER_MAX_OUTPUT_TOKENS` |
 
 `api_key` and `bearer_token` are **redacted** in stored artifacts (`variant.json`, the index).
+As a safety net, secret-looking `Variant.env` values (keys containing `token`, `key`, `secret`,
+`password`, `bearer`, `credential`, `authorization`) are redacted there too.
 
 ## Examples
 

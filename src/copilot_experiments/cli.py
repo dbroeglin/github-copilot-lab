@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import typer
@@ -11,10 +12,12 @@ from rich.console import Console
 from rich.table import Table
 
 from ._util import read_json
+from .analysis import analyze_events
 from .index import list_runs as index_list_runs
 from .index import reindex as index_reindex
-from .models import Experiment
-from .runner import run_experiment
+from .models import DryRunReport, Experiment, ExperimentRun
+from .render import render_session_analysis
+from .runner import dry_run_experiment, run_experiment
 from .scaffold import ScaffoldError, init_experiment_repo
 from .sessionlog import load_events
 from .storage import Layout
@@ -106,10 +109,29 @@ def init(
 def run(
     name: str | None = typer.Argument(None, help="Only run the experiment with this name/slug."),
     root: Path | None = typer.Option(None, "--root", help="Experiment repository root."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Use the mock invoker (no Copilot)."),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Validate the whole pipeline in a throwaway dir and persist nothing.",
+    ),
     copilot_binary: str = typer.Option("copilot", "--copilot", help="Path to the copilot binary."),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Stream per-trial progress and live Copilot output as the run proceeds.",
+    ),
 ) -> None:
-    """Discover and run experiment(s) defined under ``experiments/``."""
+    """Discover and run experiment(s) defined under ``experiments/``.
+
+    With ``--dry-run`` the full pipeline is exercised with the mock invoker inside a
+    temporary directory, each stage is validated, and everything is deleted again --
+    no run is recorded under ``results/``.
+
+    Pass ``--verbose`` to stream per-trial progress (workspace provisioning, the
+    Copilot invocation, session-log/metrics, and verification) plus Copilot's own
+    output live as the run proceeds.
+    """
     root = Path(root or Path.cwd())
     layout = Layout(root)
     experiments = _load_experiments(layout.experiments_dir)
@@ -123,15 +145,33 @@ def run(
             err.print(f"[red]No experiment matched[/red] {name!r}")
             raise typer.Exit(1)
 
+    if dry_run:
+        all_ok = True
+        for _path, experiment in experiments:
+            console.print(
+                f"[bold]Dry-run[/bold] {experiment.name} "
+                f"({len(experiment.variants)} variant(s)) [dim]— validating plumbing[/dim]"
+            )
+            report = dry_run_experiment(experiment, root=root)
+            _print_dry_run_report(report)
+            all_ok = all_ok and report.ok
+        raise typer.Exit(0 if all_ok else 1)
+
     for _path, experiment in experiments:
         console.print(f"[bold]Running[/bold] {experiment.name} "
-                      f"({len(experiment.variants)} variant(s))"
-                      + (" [dim](dry-run)[/dim]" if dry_run else ""))
+                      f"({len(experiment.variants)} variant(s))")
+        progress = _make_progress() if verbose else None
+        copilot_stream = _make_copilot_stream() if verbose else None
         run_obj = run_experiment(
-            experiment, root=root, dry_run=dry_run, copilot_binary=copilot_binary
+            experiment,
+            root=root,
+            copilot_binary=copilot_binary,
+            progress=progress,
+            copilot_stream=copilot_stream,
         )
         summary = read_json(layout.run_dir(experiment.slug, run_obj.run_id) / "summary.json")
         _print_run_summary(summary)
+        _warn_failed_trials(layout, experiment, run_obj)
         console.print(f"[dim]results:[/dim] {layout.run_dir(experiment.slug, run_obj.run_id)}\n")
 
 
@@ -255,6 +295,45 @@ def inspect(
 
 
 @app.command()
+def analyze(
+    run_id: str | None = typer.Argument(None, help="Run id or unique prefix."),
+    variant: str | None = typer.Option(None, "--variant", help="Variant slug (default: first)."),
+    trial: int | None = typer.Option(None, "--trial", help="Trial number (default: first)."),
+    file: Path | None = typer.Option(
+        None, "--file", help="Analyze an events.jsonl file directly (ignores run/variant/trial)."
+    ),
+    last: bool = typer.Option(False, "--last", help="Analyze the most recent run."),
+    max_turns: int = typer.Option(0, "--max-turns", help="Limit timeline rows (0 = all)."),
+    root: Path | None = typer.Option(None, "--root", help="Experiment repository root."),
+) -> None:
+    """Analyze a captured session log and render a rich overview of what happened."""
+    if file is not None:
+        events = load_events(file)
+        if not events:
+            err.print(f"[red]No events found in[/red] {file}")
+            raise typer.Exit(1)
+        render_session_analysis(analyze_events(events), console, title=file.name,
+                                max_turns=max_turns)
+        return
+
+    root = Path(root or Path.cwd())
+    layout = Layout(root)
+    run_dir = layout.latest_run() if last else (layout.find_run(run_id) if run_id else None)
+    if run_dir is None:
+        err.print("[red]Run not found.[/red] Pass a run id, --last, or --file.")
+        raise typer.Exit(1)
+
+    events_path, label = _resolve_trial_events(run_dir, variant, trial)
+    if events_path is None:
+        err.print(f"[red]No trial session log found in[/red] {run_dir}")
+        raise typer.Exit(1)
+
+    render_session_analysis(
+        analyze_events(load_events(events_path)), console, title=label, max_turns=max_turns
+    )
+
+
+@app.command()
 def reindex(
     root: Path | None = typer.Option(None, "--root", help="Experiment repository root."),
 ) -> None:
@@ -268,6 +347,121 @@ def reindex(
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+def _resolve_trial_events(
+    run_dir: Path, variant: str | None, trial: int | None
+) -> tuple[Path | None, str]:
+    """Locate a trial's ``events.jsonl``, defaulting to the first variant/trial."""
+    variants_dir = run_dir / "variants"
+    if variant is not None:
+        vdir = variants_dir / variant
+    else:
+        subdirs = sorted(p for p in variants_dir.iterdir() if p.is_dir()) \
+            if variants_dir.is_dir() else []
+        if not subdirs:
+            return None, run_dir.name
+        vdir = subdirs[0]
+
+    trials_dir = vdir / "trials"
+    if trial is not None:
+        tdir = trials_dir / f"{trial:03d}"
+    else:
+        subdirs = sorted(p for p in trials_dir.iterdir() if p.is_dir()) \
+            if trials_dir.is_dir() else []
+        if not subdirs:
+            return None, f"{run_dir.name} · {vdir.name}"
+        tdir = subdirs[0]
+
+    label = f"{run_dir.name} · {vdir.name}/{tdir.name}"
+    events_path = tdir / "events.jsonl"
+    return (events_path if events_path.exists() else None), label
+
+
+def _print_dry_run_report(report: DryRunReport) -> None:
+    table = Table(title=f"Dry-run · {report.experiment}", show_lines=False)
+    table.add_column("", justify="center", width=3)
+    table.add_column("check")
+    table.add_column("detail", style="dim")
+    for c in report.checks:
+        mark = "[green]✓[/green]" if c.ok else "[red]✗[/red]"
+        table.add_row(mark, c.name, c.detail)
+    console.print(table)
+    tail = "[dim]— nothing persisted (temp dir removed)[/dim]\n"
+    if report.ok:
+        console.print(f"[green]plumbing OK[/green] {tail}")
+    else:
+        console.print(f"[red]plumbing FAILED[/red] {tail}")
+
+
+def _make_progress() -> Callable[[str], None]:
+    """Return a progress sink for ``run --verbose``.
+
+    Each line is printed dimmed. ``markup=False`` keeps Copilot's raw output and the
+    ``[variant/NNN]`` phase tags from being interpreted as Rich markup.
+    """
+
+    def _emit(msg: str) -> None:
+        console.print(msg, style="dim", markup=False, highlight=False)
+
+    return _emit
+
+
+def _make_copilot_stream() -> Callable[[str], None]:
+    """Return a live Copilot-output sink for ``run --verbose``.
+
+    Copilot's ``--output-format json`` stream is a firehose of JSON events; a stateful
+    :class:`~copilot_experiments.render.LiveEventFormatter` condenses each into a short,
+    ASCII-tagged line (turns, messages, tool calls). Unparseable lines fall back to raw
+    text; pure-noise events are dropped. Output is indented under the phase messages.
+    """
+    from .render import LiveEventFormatter
+
+    formatter = LiveEventFormatter()
+
+    def _emit(line: str) -> None:
+        rendered = formatter.format(line)
+        if rendered is not None:
+            console.print(f"    {rendered}", style="dim", markup=False, highlight=False)
+
+    return _emit
+
+
+def _warn_failed_trials(layout: Layout, experiment: Experiment, run: ExperimentRun) -> None:
+    """Loudly flag trials where Copilot did not actually run.
+
+    The summary table still renders a row for a Copilot invocation that errored
+    out immediately (e.g. a bad working directory) -- just with zero turns. That
+    makes a broken run look deceptively clean, so surface those cases explicitly
+    and point at the captured stdout for diagnosis.
+    """
+    problems: list[str] = []
+    for vr in run.variants:
+        for trial in vr.trials:
+            no_log = trial.metrics.n_turns == 0
+            failed = trial.exit_code != 0
+            if not (no_log or failed):
+                continue
+            trial_dir = layout.trial_dir(
+                experiment.slug, run.run_id, vr.variant.slug, trial.trial_no
+            )
+            reasons = []
+            if failed:
+                reasons.append(f"copilot exit={trial.exit_code}")
+            if no_log:
+                reasons.append("no session log captured (0 turns)")
+            problems.append(
+                f"  {vr.variant.slug}/{trial.trial_no:03d}: {', '.join(reasons)}\n"
+                f"      -> {trial_dir / 'stdout.jsonl'}"
+            )
+    if not problems:
+        return
+    err.print(
+        f"[yellow]Warning:[/yellow] Copilot may not have run for {len(problems)} trial(s). "
+        "Inspect the captured stdout:"
+    )
+    for line in problems:
+        err.print(f"[yellow]{line}[/yellow]")
+
+
 def _print_run_summary(summary: dict) -> None:
     sr = summary.get("overall_success_rate")
     title = (

@@ -14,8 +14,8 @@ experiment repo — experiment-authoring context is a template under
 - Keep tests offline: exercise the runner with `MockInvoker` (and a `solver` for the success
   path) plus a temp `--root`. Never invoke the real `copilot` binary or the network in tests.
 - Preserve invariants: filesystem is source of truth (`reindex` rebuilds `index.db`); secrets are
-  redacted on disk (`Variant.stored()` / `ProviderConfig.redacted()`); dry-runs isolate session
-  state under the run dir.
+  redacted on disk (`Variant.stored()` / `ProviderConfig.redacted()`); `--dry-run` is ephemeral —
+  it runs in a temp dir, validates each stage, and persists nothing (`dry_run_experiment`).
 
 ## When changing public behavior
 - Update `docs/` (architecture, authoring, results-format, BYOK) and `README.md`.

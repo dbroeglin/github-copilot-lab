@@ -22,27 +22,40 @@ Example
 
 from __future__ import annotations
 
+from .analysis import analyze_events
 from .models import (
+    DryRunCheck,
+    DryRunReport,
     Experiment,
     ExperimentRun,
     Metrics,
     ProviderConfig,
+    SessionAnalysis,
     Task,
+    ToolStat,
     TrialResult,
+    TurnSummary,
     Variant,
     VariantResult,
 )
-from .runner import run_experiment
+from .runner import dry_run_experiment, run_experiment
 
 __all__ = [
+    "DryRunCheck",
+    "DryRunReport",
     "Experiment",
     "ExperimentRun",
     "Metrics",
     "ProviderConfig",
+    "SessionAnalysis",
     "Task",
+    "ToolStat",
     "TrialResult",
+    "TurnSummary",
     "Variant",
     "VariantResult",
+    "analyze_events",
+    "dry_run_experiment",
     "run_experiment",
     "run",
 ]

@@ -38,3 +38,23 @@ def test_variant_stored_redacts_provider_secret():
     )
     stored = variant.stored()
     assert stored["provider"]["api_key"] == "***redacted***"
+
+
+def test_variant_stored_redacts_secret_like_env_values():
+    # The free-form env escape hatch must not leak a token into variant.json.
+    variant = Variant(
+        name="byok-via-env",
+        env={
+            "COPILOT_PROVIDER_API_KEY": "sk-live-123",
+            "GITHUB_TOKEN": "ghp_secret",
+            "HTTP_AUTHORIZATION": "Bearer abc",
+            "MY_PASSWORD": "hunter2",
+            "LOG_LEVEL": "debug",  # benign -> preserved
+        },
+    )
+    env = variant.stored()["env"]
+    assert env["COPILOT_PROVIDER_API_KEY"] == "***redacted***"
+    assert env["GITHUB_TOKEN"] == "***redacted***"
+    assert env["HTTP_AUTHORIZATION"] == "***redacted***"
+    assert env["MY_PASSWORD"] == "***redacted***"
+    assert env["LOG_LEVEL"] == "debug"

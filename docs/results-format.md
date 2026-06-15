@@ -24,6 +24,7 @@ results/
                         ├── stdout.jsonl       # copilot --output-format json stream
                         ├── events.jsonl       # copied session events (metrics source)
                         ├── metrics.json       # parsed Metrics
+                        ├── analysis.json      # SessionAnalysis (rich session overview)
                         ├── workspace.diff      # git diff of Copilot's changes
                         ├── verify.json        # verification command + exit code + output
                         └── workspace/         # the trial's working directory (final state)
@@ -57,6 +58,12 @@ Parsed from `events.jsonl`:
 ### `verify.json`
 `{ "command", "exit_code", "success", "output" }`. `success` is `exit_code == 0`. Absent when the
 task has no `verify`.
+
+### `analysis.json`
+A serialized `SessionAnalysis` — a richer, rendering-agnostic overview of the same
+`events.jsonl` (session header, totals, per-tool histogram, and a per-turn timeline). It is what
+the `analyze` command renders with Rich, and is the data contract a future web explorer will
+consume. See [`docs/analysis.md`](analysis.md) for the field reference.
 
 ### `meta.json`
 Per-trial summary: `trial_no`, `session_id`, `exit_code`, `duration_s`, `success`, `workspace`.
@@ -102,4 +109,10 @@ LIMIT 10;
 ## Secret handling
 
 `variant.json` and the `params_json` column are written via `Variant.stored()`, which masks
-`api_key` and `bearer_token` from any BYOK `ProviderConfig`. Secrets are never persisted.
+`api_key` and `bearer_token` from any BYOK `ProviderConfig`, and redacts the value of any
+`Variant.env` key whose name looks secret-bearing (`key`, `token`, `secret`, `password`,
+`bearer`, `credential`, `authorization`). Secrets are never persisted.
+
+Copilot's own `--log-dir` debug log is **not** kept: it is written to an ephemeral temp dir and
+deleted after each trial (see [ADR-0010](adr/0010-keep-secrets-and-debug-logs-out-of-results.md)).
+The captured `stdout.jsonl` and `events.jsonl` are the durable record.

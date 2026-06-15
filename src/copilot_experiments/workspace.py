@@ -8,6 +8,10 @@ from pathlib import Path
 
 from .models import Task
 
+# Applied to every git invocation. ``core.longpaths=true`` lets git write objects
+# under the deep ``results/.../trials/NNN/workspace/.git`` tree on Windows, where the
+# baseline commit and diff would otherwise fail with "Filename too long" (MAX_PATH).
+_GIT_CONFIG = ["-c", "core.longpaths=true"]
 _GIT_IDENTITY = [
     "-c",
     "user.email=copilot-experiments@example.com",
@@ -22,11 +26,24 @@ class WorkspaceError(RuntimeError):
 
 def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["git", *args],
+        ["git", *_GIT_CONFIG, *args],
         cwd=str(cwd),
         capture_output=True,
         text=True,
     )
+
+
+def _git_checked(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
+    """Run git and raise :class:`WorkspaceError` on a non-zero exit.
+
+    Used for the baseline/diff plumbing so a silent git failure (e.g. an
+    unwritable object store) can never masquerade as "no changes".
+    """
+    proc = _git(args, cwd)
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise WorkspaceError(f"git {' '.join(args)} failed (exit {proc.returncode}): {detail}")
+    return proc
 
 
 def run_shell(command: str, cwd: Path, env: dict[str, str] | None = None) -> tuple[int, str]:
@@ -66,11 +83,15 @@ def provision(task: Task, workspace: Path, repo_root: Path) -> Path:
             if proc.returncode != 0:
                 raise WorkspaceError(f"git checkout {task.ref} failed: {proc.stderr.strip()}")
 
-    # Establish a git baseline so diffing is reliable.
+    # Establish a git baseline so diffing is reliable. These steps are checked:
+    # a silent failure here (historically: Windows MAX_PATH on the deep results
+    # tree) would leave no HEAD and make every diff come back empty.
     if not (workspace / ".git").exists():
-        _git(["init", "--quiet"], workspace)
-    _git(["add", "-A"], workspace)
-    _git([*_GIT_IDENTITY, "commit", "--quiet", "--allow-empty", "-m", "baseline"], workspace)
+        _git_checked(["init", "--quiet"], workspace)
+    _git_checked(["add", "-A"], workspace)
+    _git_checked(
+        [*_GIT_IDENTITY, "commit", "--quiet", "--allow-empty", "-m", "baseline"], workspace
+    )
 
     for command in task.setup:
         code, output = run_shell(command, workspace)
@@ -81,9 +102,14 @@ def provision(task: Task, workspace: Path, repo_root: Path) -> Path:
 
 
 def capture_diff(workspace: Path) -> str:
-    """Return a unified diff of all changes since the baseline commit."""
+    """Return a unified diff of all changes since the baseline commit.
+
+    Returns ``""`` only when the workspace has no git baseline at all. If a
+    baseline exists but git fails, a :class:`WorkspaceError` is raised rather
+    than silently reporting "no changes".
+    """
     if not (workspace / ".git").exists():
         return ""
-    _git(["add", "-A"], workspace)
-    proc = _git(["diff", "--cached", "HEAD"], workspace)
+    _git_checked(["add", "-A"], workspace)
+    proc = _git_checked(["diff", "--cached", "HEAD"], workspace)
     return proc.stdout or ""

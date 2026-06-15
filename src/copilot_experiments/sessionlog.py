@@ -82,11 +82,28 @@ def parse_metrics(events: list[dict[str, Any]]) -> Metrics:
             metrics.n_turns += 1
         elif etype == "assistant.message":
             metrics.n_assistant_messages += 1
+            model = data.get("model")
+            if model:
+                models.append(model)
+            out = data.get("outputTokens")
+            inp = data.get("inputTokens")
+            if isinstance(out, int):
+                metrics.output_tokens = (metrics.output_tokens or 0) + out
+            if isinstance(inp, int):
+                metrics.input_tokens = (metrics.input_tokens or 0) + inp
         elif etype == "tool.execution_complete":
             metrics.n_tool_calls += 1
             if data.get("success") is False:
                 metrics.n_tool_failures += 1
             model = data.get("model")
+            if model:
+                models.append(model)
+        elif etype == "tool.execution_start":
+            model = data.get("model")
+            if model:
+                models.append(model)
+        elif etype == "session.start":
+            model = data.get("selectedModel")
             if model:
                 models.append(model)
         elif etype == "session.model_change":

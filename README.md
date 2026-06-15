@@ -21,7 +21,9 @@ flowchart LR
     B --> E["results/ tree\n(per trial artifacts)"]
     D --> E
     E --> F["results/index.db\n(SQLite index)"]
-    E --> G["summary.md / show / inspect"]
+    E --> G["analysis.json\n(per session)"]
+    G --> H["analyze\n(Rich overview)"]
+    E --> I["summary.md / show / inspect"]
 ```
 
 - An **experiment** is a Python object: a `Task` (prompt + workspace fixture + optional
@@ -43,22 +45,42 @@ uv run copilot-experiments init my-experiments
 cd my-experiments
 uv sync
 
-# dry-run the example experiment (uses a mock Copilot — no credits required)
+# validate the whole pipeline without spending credits (mock Copilot; persists nothing)
 uv run copilot-experiments run --dry-run
-uv run copilot-experiments show --last
 
-# run for real (requires an authenticated `copilot`, or BYOK env vars)
+# run for real (requires an authenticated `copilot`, or BYOK env vars), then inspect it
 uv run copilot-experiments run
+uv run copilot-experiments show --last
 ```
+
+### Try the bundled tracer bullet (no scaffolding)
+
+A small, **multi-turn** example ships in this repo. From the repo root:
+
+```bash
+uv sync
+
+# validate the pipeline end-to-end (mock Copilot, no credits, nothing saved)
+uv run copilot-experiments run     --root examples/tracer_bullet --dry-run
+
+# run it for real, then render the captured session log
+uv run copilot-experiments run     --root examples/tracer_bullet
+uv run copilot-experiments analyze --root examples/tracer_bullet --last
+```
+
+`analyze` reads the captured Copilot **session log** and renders a Rich overview — session
+header, totals, a per-tool histogram, and a per-turn timeline. See
+[`examples/tracer_bullet/`](examples/tracer_bullet) and [`docs/analysis.md`](docs/analysis.md).
 
 ## CLI
 
 | Command | Description |
 | --- | --- |
 | `init <dir>` | Scaffold a new standalone experiment repository. |
-| `run [name]` | Discover and run experiment(s) in `experiments/`; writes `results/` + index. |
+| `run [name]` | Discover and run experiment(s) in `experiments/`; writes `results/` + index. Add `--dry-run` to validate the whole pipeline in a temp dir and persist nothing. |
 | `list` | List experiments and past runs. |
 | `show <run-id>` / `show --last` | Print a run summary and per-variant comparison. |
+| `analyze <run-id>` / `analyze --last` / `analyze --file <events.jsonl>` | Render a rich overview of a session log (timeline, tools, tokens). |
 | `inspect <run-id>` | Drill into a trial's session events and metrics. |
 | `reindex` | Rebuild `results/index.db` from the filesystem. |
 
@@ -66,8 +88,10 @@ uv run copilot-experiments run
 
 - [`docs/architecture.md`](docs/architecture.md) — how the pieces fit together.
 - [`docs/authoring-experiments.md`](docs/authoring-experiments.md) — write experiments in Python.
+- [`docs/analysis.md`](docs/analysis.md) — the `analyze` command, the `SessionAnalysis` model, and the web explorer (TBD).
 - [`docs/results-format.md`](docs/results-format.md) — the on-disk layout and SQLite schema.
 - [`docs/byok-and-local-models.md`](docs/byok-and-local-models.md) — run experiments against BYOK / local models.
+- [`docs/adr/`](docs/adr) — architecture decision records.
 
 ## Development
 
