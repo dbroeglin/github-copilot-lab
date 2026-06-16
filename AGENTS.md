@@ -40,6 +40,8 @@ plus a [Typer](https://typer.tiangolo.com/) CLI. It is developed with [`uv`](htt
   - `cli.py` — the Typer app (`init`, `run`, `list`, `show`, `analyze`, `inspect`, `reindex`).
   - `templates/experiment_repo/` — package-data template for scaffolded experiment repos.
 - `examples/tracer_bullet/` — a committed, runnable multi-turn example experiment (textstats).
+- `examples/task_suite/` — a committed multi-task example (strtools + csvtools) exercising the
+  task axis and its mean-success / resolved@k suite-coverage metrics.
 - `sandbox/` — local scratch space for exercising the lib/CLI (its `results/` are gitignored).
 - `tests/` — pytest suite (uses `MockInvoker`; **never** requires a real `copilot` or network).
 - `docs/` — architecture, authoring guide, analysis (`analyze`), results-format reference,
