@@ -44,10 +44,23 @@ The rendering (built with [Rich](https://rich.readthedocs.io/)) has these parts:
    time, ms/request, current & peak context, system/tool-definition tokens, compactions,
    truncations, files modified, lines ±, AIU per line). Multi-model sessions also get a per-model
    table. See [ADR-0011](adr/0011-token-economics-from-session-shutdown.md).
-5. **Timeline** — one row per assistant turn: time, duration, output tokens, the tools invoked
+5. **Phases (temporal)** — *only when the session has at least five turns.* The turns are split
+   into five contiguous, near-equal groups (`early` → `later`) and each phase shows its turn span,
+   tool calls, output tokens, share of total output, and duration. This mirrors the phase-level
+   analysis in Bai et al. (their Finding #6: context construction dominates early phases,
+   generation later ones) — tool-heavy, low-output early phases give way to higher output-share
+   later ones. See the limitation note below.
+6. **Timeline** — one row per assistant turn: time, duration, output tokens, the tools invoked
    in that turn, and a preview of what the assistant said.
 
 Warnings, if any, are shown in a panel at the bottom.
+
+> **Phases use per-turn data only — no per-phase input/cache/cost.** Copilot logs input, cache,
+> reasoning, and AIU **only as session totals** (`session.shutdown`), never per turn; the per-turn
+> `assistant.message` carries `outputTokens` but not `inputTokens`. So the phase table faithfully
+> distributes the signals that *are* per-turn — output tokens, tool activity, and duration — and
+> deliberately does **not** fabricate per-phase input or cost. This captures the measurable part of
+> the paper's Finding #6 (the early-vs-late *shape* of activity) without inventing data.
 
 > **A blank "assistant said" is normal — it is not a missing-data bug.** Many turns invoke a
 > tool without any accompanying prose, so the assistant text is genuinely empty and the row
@@ -82,6 +95,7 @@ stored `analysis.json`, and any future consumer.
 | `economics` | `TokenEconomics`: token-type split, AIU cost, context composition, productivity (see below). |
 | `tools` | `ToolStat(name, calls, failures, total_duration_ms, total_result_chars)`, sorted by calls desc. |
 | `turns` | `TurnSummary(turn_no, duration_s, tools, output_tokens, text_preview, …)`. |
+| `phases` | `PhaseStat(name, turn_from, turn_to, n_turns, n_tool_calls, output_tokens, duration_s, output_share)` — five temporal phases (empty for sessions under five turns). |
 | `warnings` | Warning messages. |
 | `event_type_counts` | Histogram of raw event `type`s. |
 

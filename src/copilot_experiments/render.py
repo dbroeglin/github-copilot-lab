@@ -154,6 +154,36 @@ def _timeline_table(a: SessionAnalysis, max_turns: int = 0) -> Table:
     return table
 
 
+def _phases_table(a: SessionAnalysis) -> Table | None:
+    """Per-phase output/tool/duration distribution (Bai et al. Finding #6).
+
+    Returns ``None`` for short sessions (< 5 turns) where phases carry no signal.
+    Per-phase input/cache/cost are intentionally absent -- Copilot logs those only
+    as session totals, not per turn (see ``docs/analysis.md``).
+    """
+    if not a.phases:
+        return None
+    table = Table(title="Phases (temporal)", title_justify="left")
+    table.add_column("phase")
+    table.add_column("turns")
+    table.add_column("tools", justify="right")
+    table.add_column("out tok", justify="right")
+    table.add_column("out %", justify="right")
+    table.add_column("dur", justify="right")
+    for p in a.phases:
+        span = str(p.turn_from) if p.turn_from == p.turn_to else f"{p.turn_from}-{p.turn_to}"
+        share = "-" if p.output_share is None else f"{p.output_share * 100:.0f}%"
+        table.add_row(
+            p.name,
+            span,
+            str(p.n_tool_calls),
+            _int(p.output_tokens),
+            share,
+            _dur(p.duration_s),
+        )
+    return table
+
+
 def _economics_renderables(a: SessionAnalysis) -> list[Table]:
     """Cost, token-type split, context and productivity tables (omitted when no shutdown)."""
     e = a.economics
@@ -230,6 +260,10 @@ def render_session_analysis(
     if econ:
         console.print()
         console.print(Columns(econ, padding=(0, 4)))
+    phases = _phases_table(analysis)
+    if phases is not None:
+        console.print()
+        console.print(phases)
     console.print()
     console.print(_timeline_table(analysis, max_turns=max_turns))
     if analysis.warnings:

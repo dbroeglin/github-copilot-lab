@@ -336,6 +336,28 @@ class TurnSummary(BaseModel):
     output_tokens: int | None = None
 
 
+class PhaseStat(BaseModel):
+    """Aggregated activity for one temporal phase of a session.
+
+    The session's turns are split into five contiguous, near-equal groups
+    (early -> later), echoing the phase-level analysis in Bai et al. (the paper's
+    Finding #6: context construction dominates early phases, generation later
+    ones). Only per-turn signals the Copilot log exposes reliably are aggregated:
+    output tokens, tool activity, and duration. Per-phase *input*/cache/cost are
+    intentionally omitted because Copilot reports those only as session totals
+    (``session.shutdown``), never per turn -- see ``docs/analysis.md``.
+    """
+
+    name: str
+    turn_from: int
+    turn_to: int
+    n_turns: int = 0
+    n_tool_calls: int = 0
+    output_tokens: int = 0
+    duration_s: float | None = None
+    output_share: float | None = None
+
+
 class SessionAnalysis(BaseModel):
     """A structured, human-friendly overview of a single Copilot session log.
 
@@ -376,6 +398,7 @@ class SessionAnalysis(BaseModel):
     # Breakdowns.
     tools: list[ToolStat] = Field(default_factory=list)
     turns: list[TurnSummary] = Field(default_factory=list)
+    phases: list[PhaseStat] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     event_type_counts: dict[str, int] = Field(default_factory=dict)
 
