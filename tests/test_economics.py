@@ -12,7 +12,13 @@ from rich.console import Console
 
 from copilot_experiments import pricing
 from copilot_experiments.analysis import analyze_events
-from copilot_experiments.models import Metrics, TrialResult, Variant, VariantResult
+from copilot_experiments.models import (
+    Metrics,
+    TaskResult,
+    TrialResult,
+    Variant,
+    VariantResult,
+)
 from copilot_experiments.render import render_session_analysis
 from copilot_experiments.report import aggregate_variant, build_summary, summary_markdown
 from copilot_experiments.sessionlog import extract_economics, parse_metrics
@@ -246,7 +252,8 @@ def _variant_result(aius: list[float], successes: list[bool | None]) -> VariantR
         )
         for i in range(len(aius))
     ]
-    return VariantResult(variant=Variant(name="v", model="claude-opus-4.8"), trials=trials)
+    task = TaskResult(task_slug="task-001", task_name=None, prompt="p", trials=trials)
+    return VariantResult(variant=Variant(name="v", model="claude-opus-4.8"), tasks=[task])
 
 
 def test_aggregate_variant_variance_and_cost():

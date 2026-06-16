@@ -72,6 +72,10 @@ uv run copilot-experiments analyze --root examples/tracer_bullet --last
 header, totals, a per-tool histogram, and a per-turn timeline. See
 [`examples/tracer_bullet/`](examples/tracer_bullet) and [`docs/analysis.md`](docs/analysis.md).
 
+For a **multi-task** experiment (one variant matrix run across several tasks of different
+difficulty, with mean-success and resolved@k coverage metrics), see
+[`examples/task_suite/`](examples/task_suite).
+
 ## CLI
 
 | Command | Description |

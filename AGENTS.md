@@ -18,7 +18,9 @@ plus a [Typer](https://typer.tiangolo.com/) CLI. It is developed with [`uv`](htt
 ## Repository map
 - `src/copilot_experiments/` — the package.
   - `models.py` — pydantic models: `Experiment`, `Task`, `Variant`, `ProviderConfig`, and the
-    result objects (`ExperimentRun` → `VariantResult` → `TrialResult`, `Metrics`).
+    result objects (`ExperimentRun` → `VariantResult` → `TaskResult` → `TrialResult`, `Metrics`).
+    An experiment is `Tasks × Variants × Trials`: `task=` is single-task sugar, `tasks=[...]` a
+    suite (`Experiment.iter_tasks()` normalises both to `(task_slug, Task)` pairs).
   - `invoker.py` — builds and runs the `copilot` command. `CopilotInvoker` shells out to the
     real CLI; `MockInvoker` simulates a run (used by dry-runs and the test suite).
   - `workspace.py` — provisions an isolated per-trial workspace (copy a fixture or `git clone`),
@@ -29,7 +31,7 @@ plus a [Typer](https://typer.tiangolo.com/) CLI. It is developed with [`uv`](htt
     reading from `session.compaction_complete`, and the per-type AIU decomposition.
   - `analysis.py` — derives a rendering-agnostic `SessionAnalysis` (tools, turns, tokens, economics) from session events.
   - `render.py` — renders a `SessionAnalysis` to the terminal with Rich (backs the `analyze` command).
-  - `runner.py` — orchestration: variants × trials → result artifacts + index. Also
+  - `runner.py` — orchestration: variants × tasks × trials → result artifacts + index. Also
     `dry_run_experiment()` (ephemeral, validating plumbing check that persists nothing).
   - `storage.py` — the `results/` filesystem `Layout` and run discovery.
   - `index.py` — the SQLite index (`results/index.db`) derived from the filesystem.
@@ -38,6 +40,8 @@ plus a [Typer](https://typer.tiangolo.com/) CLI. It is developed with [`uv`](htt
   - `cli.py` — the Typer app (`init`, `run`, `list`, `show`, `analyze`, `inspect`, `reindex`).
   - `templates/experiment_repo/` — package-data template for scaffolded experiment repos.
 - `examples/tracer_bullet/` — a committed, runnable multi-turn example experiment (textstats).
+- `examples/task_suite/` — a committed multi-task example (strtools + csvtools) exercising the
+  task axis and its mean-success / resolved@k suite-coverage metrics.
 - `sandbox/` — local scratch space for exercising the lib/CLI (its `results/` are gitignored).
 - `tests/` — pytest suite (uses `MockInvoker`; **never** requires a real `copilot` or network).
 - `docs/` — architecture, authoring guide, analysis (`analyze`), results-format reference,
