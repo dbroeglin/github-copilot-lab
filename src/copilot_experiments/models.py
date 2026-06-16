@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ._util import slugify
 
@@ -91,6 +91,10 @@ class Task(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    name: str | None = None
+    """Human-readable task name. When set, it seeds the task's directory slug;
+    otherwise a positional ``task-NNN`` slug is assigned by the experiment."""
+
     prompt: str
     """The prompt handed to ``copilot -p``."""
 
@@ -145,18 +149,53 @@ class Variant(BaseModel):
 
 
 class Experiment(BaseModel):
-    """A named task plus the matrix of variants to run it under."""
+    """A named task suite plus the matrix of variants to run it under.
+
+    The comparison matrix is ``Tasks × Variants × Trials``. Provide either a
+    single ``task`` (sugar for a one-task suite) or an explicit list of
+    ``tasks`` -- exactly one of the two. See ADR-0012.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str
     description: str = ""
-    task: Task
+    task: Task | None = None
+    tasks: list[Task] = Field(default_factory=list)
     variants: list[Variant]
+
+    @model_validator(mode="after")
+    def _check_task_suite(self) -> Experiment:
+        if self.task is not None and self.tasks:
+            raise ValueError("Provide either 'task' or 'tasks', not both.")
+        if self.task is None and not self.tasks:
+            raise ValueError("An experiment must define a 'task' or a non-empty 'tasks' list.")
+        return self
 
     @property
     def slug(self) -> str:
         return slugify(self.name)
+
+    def iter_tasks(self) -> list[tuple[str, Task]]:
+        """Return the task suite as an ordered list of ``(task_slug, Task)``.
+
+        Slugs come from ``Task.name`` when set, else a positional ``task-NNN``.
+        Collisions are disambiguated with a numeric suffix so slugs are unique
+        and stable for directory names and the index.
+        """
+        tasks = self.tasks if self.tasks else ([self.task] if self.task else [])
+        result: list[tuple[str, Task]] = []
+        seen: dict[str, int] = {}
+        for idx, task in enumerate(tasks, start=1):
+            base = slugify(task.name) if task.name else f"task-{idx:03d}"
+            if base in seen:
+                seen[base] += 1
+                slug = f"{base}-{seen[base]}"
+            else:
+                seen[base] = 1
+                slug = base
+            result.append((slug, task))
+        return result
 
 
 # --------------------------------------------------------------------------- #
@@ -350,16 +389,63 @@ class TrialResult(BaseModel):
     metrics: Metrics = Field(default_factory=Metrics)
 
 
-class VariantResult(BaseModel):
-    variant: Variant
+class TaskResult(BaseModel):
+    """All trials of one task within a variant (one cell of the suite × matrix)."""
+
+    task_slug: str
+    task_name: str | None = None
+    prompt: str | None = None
     trials: list[TrialResult] = Field(default_factory=list)
 
     @property
     def success_rate(self) -> float | None:
+        """Mean trial success for this task (the variability-aware measure)."""
         graded = [t.success for t in self.trials if t.success is not None]
         if not graded:
             return None
         return sum(1 for s in graded if s) / len(graded)
+
+    @property
+    def resolved(self) -> bool | None:
+        """Resolved@k: did *any* trial of this task pass (best-of-k)?"""
+        graded = [t.success for t in self.trials if t.success is not None]
+        if not graded:
+            return None
+        return any(graded)
+
+
+class VariantResult(BaseModel):
+    variant: Variant
+    tasks: list[TaskResult] = Field(default_factory=list)
+
+    @property
+    def all_trials(self) -> list[TrialResult]:
+        """Every trial across every task, flattened (for cost/token aggregates)."""
+        return [t for tr in self.tasks for t in tr.trials]
+
+    @property
+    def success_rate(self) -> float | None:
+        """Mean trial success across all tasks and trials of this variant."""
+        graded = [t.success for t in self.all_trials if t.success is not None]
+        if not graded:
+            return None
+        return sum(1 for s in graded if s) / len(graded)
+
+    @property
+    def mean_resolved_rate(self) -> float | None:
+        """Mean over tasks of each task's mean trial success."""
+        rates = [tr.success_rate for tr in self.tasks if tr.success_rate is not None]
+        if not rates:
+            return None
+        return sum(rates) / len(rates)
+
+    @property
+    def resolved_at_k_rate(self) -> float | None:
+        """Fraction of tasks resolved on at least one trial (best-of-k)."""
+        graded = [tr.resolved for tr in self.tasks if tr.resolved is not None]
+        if not graded:
+            return None
+        return sum(1 for r in graded if r) / len(graded)
 
 
 class ExperimentRun(BaseModel):

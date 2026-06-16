@@ -235,12 +235,13 @@ def show(
 def inspect(
     run_id: str | None = typer.Argument(None, help="Run id or unique prefix."),
     variant: str | None = typer.Option(None, "--variant", help="Variant slug."),
+    task: str | None = typer.Option(None, "--task", help="Task slug."),
     trial: int | None = typer.Option(None, "--trial", help="Trial number."),
     events: int = typer.Option(20, "--events", help="Number of session events to show."),
     last: bool = typer.Option(False, "--last", help="Inspect the most recent run."),
     root: Path | None = typer.Option(None, "--root", help="Experiment repository root."),
 ) -> None:
-    """Drill into a run's variants, trials, and session events."""
+    """Drill into a run's variants, tasks, trials, and session events."""
     root = Path(root or Path.cwd())
     layout = Layout(root)
     run_dir = layout.latest_run() if last else (layout.find_run(run_id) if run_id else None)
@@ -252,21 +253,37 @@ def inspect(
     if variant is None:
         table = Table(title=f"Variants in {run_dir.name}")
         table.add_column("variant")
+        table.add_column("tasks", justify="right")
         table.add_column("trials", justify="right")
         for vdir in sorted(variants_dir.iterdir()):
-            trials = sorted((vdir / "trials").glob("*")) if (vdir / "trials").is_dir() else []
-            table.add_row(vdir.name, str(len(trials)))
+            tasks = sorted((vdir / "tasks").glob("*")) if (vdir / "tasks").is_dir() else []
+            n_trials = sum(
+                len(sorted((tk / "trials").glob("*"))) if (tk / "trials").is_dir() else 0
+                for tk in tasks
+            )
+            table.add_row(vdir.name, str(len(tasks)), str(n_trials))
         console.print(table)
         return
 
-    trials_dir = variants_dir / variant / "trials"
+    tasks_dir = variants_dir / variant / "tasks"
+    if task is None:
+        table = Table(title=f"Tasks in {variant}")
+        table.add_column("task")
+        table.add_column("trials", justify="right")
+        for tkdir in sorted(tasks_dir.iterdir()) if tasks_dir.is_dir() else []:
+            trials = sorted((tkdir / "trials").glob("*")) if (tkdir / "trials").is_dir() else []
+            table.add_row(tkdir.name, str(len(trials)))
+        console.print(table)
+        return
+
+    trials_dir = tasks_dir / task / "trials"
     if trial is None:
-        table = Table(title=f"Trials in {variant}")
+        table = Table(title=f"Trials in {variant}/{task}")
         table.add_column("trial")
         table.add_column("success")
         table.add_column("exit")
         table.add_column("duration (s)", justify="right")
-        for tdir in sorted(trials_dir.iterdir()):
+        for tdir in sorted(trials_dir.iterdir()) if trials_dir.is_dir() else []:
             meta = read_json(tdir / "meta.json")
             table.add_row(
                 tdir.name,
@@ -298,6 +315,7 @@ def inspect(
 def analyze(
     run_id: str | None = typer.Argument(None, help="Run id or unique prefix."),
     variant: str | None = typer.Option(None, "--variant", help="Variant slug (default: first)."),
+    task: str | None = typer.Option(None, "--task", help="Task slug (default: first)."),
     trial: int | None = typer.Option(None, "--trial", help="Trial number (default: first)."),
     file: Path | None = typer.Option(
         None, "--file", help="Analyze an events.jsonl file directly (ignores run/variant/trial)."
@@ -323,7 +341,7 @@ def analyze(
         err.print("[red]Run not found.[/red] Pass a run id, --last, or --file.")
         raise typer.Exit(1)
 
-    events_path, label = _resolve_trial_events(run_dir, variant, trial)
+    events_path, label = _resolve_trial_events(run_dir, variant, task, trial)
     if events_path is None:
         err.print(f"[red]No trial session log found in[/red] {run_dir}")
         raise typer.Exit(1)
@@ -348,9 +366,9 @@ def reindex(
 # Helpers
 # --------------------------------------------------------------------------- #
 def _resolve_trial_events(
-    run_dir: Path, variant: str | None, trial: int | None
+    run_dir: Path, variant: str | None, task: str | None, trial: int | None
 ) -> tuple[Path | None, str]:
-    """Locate a trial's ``events.jsonl``, defaulting to the first variant/trial."""
+    """Locate a trial's ``events.jsonl``, defaulting to the first variant/task/trial."""
     variants_dir = run_dir / "variants"
     if variant is not None:
         vdir = variants_dir / variant
@@ -361,17 +379,27 @@ def _resolve_trial_events(
             return None, run_dir.name
         vdir = subdirs[0]
 
-    trials_dir = vdir / "trials"
+    tasks_dir = vdir / "tasks"
+    if task is not None:
+        tkdir = tasks_dir / task
+    else:
+        subdirs = sorted(p for p in tasks_dir.iterdir() if p.is_dir()) \
+            if tasks_dir.is_dir() else []
+        if not subdirs:
+            return None, f"{run_dir.name} · {vdir.name}"
+        tkdir = subdirs[0]
+
+    trials_dir = tkdir / "trials"
     if trial is not None:
         tdir = trials_dir / f"{trial:03d}"
     else:
         subdirs = sorted(p for p in trials_dir.iterdir() if p.is_dir()) \
             if trials_dir.is_dir() else []
         if not subdirs:
-            return None, f"{run_dir.name} · {vdir.name}"
+            return None, f"{run_dir.name} · {vdir.name}/{tkdir.name}"
         tdir = subdirs[0]
 
-    label = f"{run_dir.name} · {vdir.name}/{tdir.name}"
+    label = f"{run_dir.name} · {vdir.name}/{tkdir.name}/{tdir.name}"
     events_path = tdir / "events.jsonl"
     return (events_path if events_path.exists() else None), label
 
@@ -435,23 +463,25 @@ def _warn_failed_trials(layout: Layout, experiment: Experiment, run: ExperimentR
     """
     problems: list[str] = []
     for vr in run.variants:
-        for trial in vr.trials:
-            no_log = trial.metrics.n_turns == 0
-            failed = trial.exit_code != 0
-            if not (no_log or failed):
-                continue
-            trial_dir = layout.trial_dir(
-                experiment.slug, run.run_id, vr.variant.slug, trial.trial_no
-            )
-            reasons = []
-            if failed:
-                reasons.append(f"copilot exit={trial.exit_code}")
-            if no_log:
-                reasons.append("no session log captured (0 turns)")
-            problems.append(
-                f"  {vr.variant.slug}/{trial.trial_no:03d}: {', '.join(reasons)}\n"
-                f"      -> {trial_dir / 'stdout.jsonl'}"
-            )
+        for tr in vr.tasks:
+            for trial in tr.trials:
+                no_log = trial.metrics.n_turns == 0
+                failed = trial.exit_code != 0
+                if not (no_log or failed):
+                    continue
+                trial_dir = layout.trial_dir(
+                    experiment.slug, run.run_id, vr.variant.slug, tr.task_slug, trial.trial_no
+                )
+                reasons = []
+                if failed:
+                    reasons.append(f"copilot exit={trial.exit_code}")
+                if no_log:
+                    reasons.append("no session log captured (0 turns)")
+                problems.append(
+                    f"  {vr.variant.slug}/{tr.task_slug}/{trial.trial_no:03d}: "
+                    f"{', '.join(reasons)}\n"
+                    f"      -> {trial_dir / 'stdout.jsonl'}"
+                )
     if not problems:
         return
     err.print(
@@ -464,9 +494,11 @@ def _warn_failed_trials(layout: Layout, experiment: Experiment, run: ExperimentR
 
 def _print_run_summary(summary: dict) -> None:
     sr = summary.get("overall_success_rate")
+    n_tasks = summary.get("n_tasks", 1)
+    multitask = n_tasks > 1
     title = (
         f"{summary['experiment']}  ·  {summary['run_id']}  ·  "
-        f"{summary['n_trials']} trial(s)  ·  "
+        f"{n_tasks} task(s) · {summary['n_trials']} trial(s)  ·  "
         f"success {'-' if sr is None else f'{sr * 100:.0f}%'}"
     )
     table = Table(title=title)
@@ -474,8 +506,13 @@ def _print_run_summary(summary: dict) -> None:
     table.add_column("model")
     table.add_column("effort")
     table.add_column("byok")
+    if multitask:
+        table.add_column("tasks", justify="right")
     table.add_column("trials", justify="right")
     table.add_column("success", justify="right")
+    if multitask:
+        table.add_column("mean", justify="right")
+        table.add_column("resolved@k", justify="right")
     table.add_column("avg dur", justify="right")
     table.add_column("turns", justify="right")
     table.add_column("tool calls", justify="right")
@@ -485,13 +522,22 @@ def _print_run_summary(summary: dict) -> None:
     table.add_column("AIU/solve", justify="right")
     for v in summary["variants"]:
         vsr = v.get("success_rate")
-        table.add_row(
+        ms = v.get("mean_resolved_rate")
+        rk = v.get("resolved_at_k_rate")
+        row = [
             v["name"],
             v.get("model") or "-",
             v.get("reasoning_effort") or "-",
             "yes" if v.get("byok") else "no",
-            str(v["n_trials"]),
-            "-" if vsr is None else f"{vsr * 100:.0f}%",
+        ]
+        if multitask:
+            row.append(str(v.get("n_tasks", "-")))
+        row.append(str(v["n_trials"]))
+        row.append("-" if vsr is None else f"{vsr * 100:.0f}%")
+        if multitask:
+            row.append("-" if ms is None else f"{ms * 100:.0f}%")
+            row.append("-" if rk is None else f"{rk * 100:.0f}%")
+        row += [
             _num(v.get("avg_duration_s")),
             _num(v.get("avg_turns")),
             _num(v.get("avg_tool_calls")),
@@ -499,7 +545,8 @@ def _print_run_summary(summary: dict) -> None:
             _num(v.get("avg_total_tokens")),
             _aiu(v.get("avg_aiu")),
             _aiu(v.get("aiu_per_solve")),
-        )
+        ]
+        table.add_row(*row)
     total_aiu = summary.get("total_aiu")
     if total_aiu is not None:
         console.print(table)

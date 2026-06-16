@@ -40,10 +40,21 @@ CREATE TABLE IF NOT EXISTS variants (
     byok          INTEGER,
     params_json   TEXT
 );
+CREATE TABLE IF NOT EXISTS tasks (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id        TEXT,
+    variant_slug  TEXT,
+    task_slug     TEXT,
+    task_name     TEXT,
+    n_trials      INTEGER,
+    success_rate  REAL,
+    resolved      INTEGER
+);
 CREATE TABLE IF NOT EXISTS trials (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id          TEXT,
     variant_slug    TEXT,
+    task_slug       TEXT,
     trial_no        INTEGER,
     session_id      TEXT,
     exit_code       INTEGER,
@@ -98,6 +109,7 @@ def index_run_dir(conn: sqlite3.Connection, run_dir: Path) -> None:
     )
     conn.execute("DELETE FROM runs WHERE run_id=?", (run_id,))
     conn.execute("DELETE FROM variants WHERE run_id=?", (run_id,))
+    conn.execute("DELETE FROM tasks WHERE run_id=?", (run_id,))
     conn.execute("DELETE FROM trials WHERE run_id=?", (run_id,))
 
     variants = run.get("variants", [])
@@ -132,47 +144,66 @@ def index_run_dir(conn: sqlite3.Connection, run_dir: Path) -> None:
                 json.dumps(v),
             ),
         )
-        for trial in vr.get("trials", []):
-            m = trial.get("metrics", {})
-            models = m.get("models") or []
+        for tr in vr.get("tasks", []):
+            task_slug = tr.get("task_slug")
+            trials = tr.get("trials", [])
+            graded = [t for t in trials if t.get("success") is not None]
+            n_solved = sum(1 for t in graded if t.get("success"))
             conn.execute(
-                "INSERT INTO trials(run_id, variant_slug, trial_no, session_id, exit_code, "
-                "duration_s, success, n_turns, n_tool_calls, n_tool_failures, input_tokens, "
-                "output_tokens, total_tokens, cache_read_tokens, cache_write_tokens, "
-                "input_tokens_noncached, reasoning_tokens, aiu, api_duration_ms, n_requests, "
-                "peak_context_tokens, n_compactions, n_truncations, files_modified, lines_added, "
-                "lines_removed, model) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO tasks(run_id, variant_slug, task_slug, task_name, n_trials, "
+                "success_rate, resolved) VALUES (?,?,?,?,?,?,?)",
                 (
                     run_id,
                     vslug,
-                    trial.get("trial_no"),
-                    trial.get("session_id"),
-                    trial.get("exit_code"),
-                    trial.get("duration_s"),
-                    None if trial.get("success") is None else int(bool(trial.get("success"))),
-                    m.get("n_turns"),
-                    m.get("n_tool_calls"),
-                    m.get("n_tool_failures"),
-                    m.get("input_tokens"),
-                    m.get("output_tokens"),
-                    m.get("total_tokens"),
-                    m.get("cache_read_tokens"),
-                    m.get("cache_write_tokens"),
-                    m.get("input_tokens_noncached"),
-                    m.get("reasoning_tokens"),
-                    m.get("aiu"),
-                    m.get("api_duration_ms"),
-                    m.get("n_requests"),
-                    m.get("peak_context_tokens"),
-                    m.get("n_compactions"),
-                    m.get("n_truncations"),
-                    m.get("files_modified"),
-                    m.get("lines_added"),
-                    m.get("lines_removed"),
-                    models[-1] if models else v.get("model"),
+                    task_slug,
+                    tr.get("task_name"),
+                    len(trials),
+                    (n_solved / len(graded)) if graded else None,
+                    None if not graded else int(any(t.get("success") for t in graded)),
                 ),
             )
+            for trial in trials:
+                m = trial.get("metrics", {})
+                models = m.get("models") or []
+                conn.execute(
+                    "INSERT INTO trials(run_id, variant_slug, task_slug, trial_no, session_id, "
+                    "exit_code, duration_s, success, n_turns, n_tool_calls, n_tool_failures, "
+                    "input_tokens, output_tokens, total_tokens, cache_read_tokens, "
+                    "cache_write_tokens, input_tokens_noncached, reasoning_tokens, aiu, "
+                    "api_duration_ms, n_requests, peak_context_tokens, n_compactions, "
+                    "n_truncations, files_modified, lines_added, lines_removed, model) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        run_id,
+                        vslug,
+                        task_slug,
+                        trial.get("trial_no"),
+                        trial.get("session_id"),
+                        trial.get("exit_code"),
+                        trial.get("duration_s"),
+                        None if trial.get("success") is None else int(bool(trial.get("success"))),
+                        m.get("n_turns"),
+                        m.get("n_tool_calls"),
+                        m.get("n_tool_failures"),
+                        m.get("input_tokens"),
+                        m.get("output_tokens"),
+                        m.get("total_tokens"),
+                        m.get("cache_read_tokens"),
+                        m.get("cache_write_tokens"),
+                        m.get("input_tokens_noncached"),
+                        m.get("reasoning_tokens"),
+                        m.get("aiu"),
+                        m.get("api_duration_ms"),
+                        m.get("n_requests"),
+                        m.get("peak_context_tokens"),
+                        m.get("n_compactions"),
+                        m.get("n_truncations"),
+                        m.get("files_modified"),
+                        m.get("lines_added"),
+                        m.get("lines_removed"),
+                        models[-1] if models else v.get("model"),
+                    ),
+                )
     conn.commit()
 
 

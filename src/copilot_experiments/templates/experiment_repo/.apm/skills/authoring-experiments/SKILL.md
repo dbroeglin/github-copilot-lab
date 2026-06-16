@@ -8,9 +8,11 @@ description: >-
 
 # Authoring experiments
 
-An experiment is an `Experiment` object combining a `Task` with a list of `Variant`s.
+An experiment is an `Experiment` object combining one or more `Task`s with a list of `Variant`s
+(`Tasks × Variants × Trials`). Use `task=` for a single task, or `tasks=[...]` for a suite.
 
 ## Task
+- `name` — optional label; sets the `tasks/<slug>/` results dir (unnamed → `task-001`, …).
 - `prompt` — the instruction handed to `copilot -p`.
 - `fixture` — directory (relative to the repo) copied as the starting workspace; OR
   `repo` + `ref` to clone a git repository instead.
@@ -36,6 +38,20 @@ experiment = Experiment(
         Variant(name="opus", model="claude-opus-4.7", reasoning_effort="medium", trials=3),
         Variant(name="gpt", model="gpt-5.2", trials=3),
     ],
+)
+```
+
+## Task suite (multiple tasks)
+Run several tasks through the same variant matrix. The report adds **mean-success** (mean
+per-task success) and **resolved@k** (fraction of tasks any trial solved) columns.
+```python
+suite = Experiment(
+    name="My suite",
+    tasks=[
+        Task(name="Task A", prompt="...", fixture="fixtures/a", verify="python -m pytest -q"),
+        Task(name="Task B", prompt="...", fixture="fixtures/b", verify="python -m pytest -q"),
+    ],
+    variants=[Variant(name="opus", model="claude-opus-4.7", trials=3)],
 )
 ```
 

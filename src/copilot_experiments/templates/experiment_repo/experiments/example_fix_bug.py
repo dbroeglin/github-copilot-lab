@@ -34,3 +34,30 @@ experiment = Experiment(
         # ),
     ],
 )
+
+# A task suite — pass `tasks=[...]` instead of a single `task=` to run several tasks
+# through the same variant matrix (Experiment = Tasks × Variants × Trials). Each named
+# task gets its own `tasks/<slug>/` directory, and the report adds suite-coverage
+# columns: mean-success (mean per-task success) and resolved@k (any-trial pass per task).
+#
+# suite_experiment = Experiment(
+#     name="Calculator fixes",
+#     description="Fix several independent bugs and measure coverage across the suite.",
+#     tasks=[
+#         Task(
+#             name="Fix multiply",
+#             prompt="Fix the bug in calculator.py so `python -m pytest -q` passes.",
+#             fixture="fixtures/buggy_calculator",
+#             verify="python -m pytest -q",
+#         ),
+#         Task(
+#             name="Fix divide",
+#             prompt="Fix the divide-by-zero handling so `python -m pytest -q` passes.",
+#             fixture="fixtures/buggy_divide",
+#             verify="python -m pytest -q",
+#         ),
+#     ],
+#     variants=[
+#         Variant(name="opus-medium", model="claude-opus-4.7", reasoning_effort="medium"),
+#     ],
+# )
