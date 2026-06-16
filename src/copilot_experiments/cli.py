@@ -13,6 +13,7 @@ from rich.table import Table
 
 from ._util import read_json
 from .analysis import analyze_events
+from .auth import AuthError, preflight_github_token
 from .index import list_runs as index_list_runs
 from .index import reindex as index_reindex
 from .models import DryRunReport, Experiment, ExperimentRun
@@ -157,6 +158,17 @@ def run(
             all_ok = all_ok and report.ok
         raise typer.Exit(0 if all_ok else 1)
 
+    # Preflight authentication ONCE so a missing token aborts immediately instead of
+    # failing every trial after provisioning. The token is injected into each trial's
+    # environment; it is never logged (only its source) or persisted.
+    try:
+        auth = preflight_github_token()
+    except AuthError as exc:
+        err.print(f"[red]Authentication error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    console.print(f"[dim]auth:[/dim] using GitHub token from {auth.source}")
+
+    any_failures = False
     for _path, experiment in experiments:
         console.print(f"[bold]Running[/bold] {experiment.name} "
                       f"({len(experiment.variants)} variant(s))")
@@ -166,13 +178,21 @@ def run(
             experiment,
             root=root,
             copilot_binary=copilot_binary,
+            github_token=auth.token,
             progress=progress,
             copilot_stream=copilot_stream,
         )
         summary = read_json(layout.run_dir(experiment.slug, run_obj.run_id) / "summary.json")
         _print_run_summary(summary)
         _warn_failed_trials(layout, experiment, run_obj)
+        if run_obj.status != "completed":
+            any_failures = True
         console.print(f"[dim]results:[/dim] {layout.run_dir(experiment.slug, run_obj.run_id)}\n")
+
+    # A distinct exit code (2) lets scripts tell harness/infra trouble apart from a
+    # clean run (0) and usage errors like "no experiments found" (1).
+    if any_failures:
+        raise typer.Exit(2)
 
 
 @app.command(name="list")
@@ -263,6 +283,7 @@ def inspect(
     if trial is None:
         table = Table(title=f"Trials in {variant}")
         table.add_column("trial")
+        table.add_column("status")
         table.add_column("success")
         table.add_column("exit")
         table.add_column("duration (s)", justify="right")
@@ -270,6 +291,7 @@ def inspect(
             meta = read_json(tdir / "meta.json")
             table.add_row(
                 tdir.name,
+                str(meta.get("status", "-")),
                 str(meta.get("success")),
                 str(meta.get("exit_code")),
                 f"{meta.get('duration_s', 0):.2f}",
@@ -282,6 +304,13 @@ def inspect(
         err.print(f"[red]Trial not found:[/red] {tdir}")
         raise typer.Exit(1)
     console.print(f"[bold]meta[/bold]: {read_json(tdir / 'meta.json')}")
+    meta = read_json(tdir / "meta.json")
+    if meta.get("status") and meta["status"] != "ok":
+        artifact = meta.get("error_artifact") or "stdout.txt"
+        console.print(
+            f"[yellow]status[/yellow]: {meta['status']} — {meta.get('error') or ''}\n"
+            f"  -> {tdir / artifact}"
+        )
     console.print(f"[bold]metrics[/bold]: {read_json(tdir / 'metrics.json')}")
     if (tdir / "verify.json").exists():
         verify = read_json(tdir / "verify.json")
@@ -426,37 +455,37 @@ def _make_copilot_stream() -> Callable[[str], None]:
 
 
 def _warn_failed_trials(layout: Layout, experiment: Experiment, run: ExperimentRun) -> None:
-    """Loudly flag trials where Copilot did not actually run.
+    """Loudly flag trials that did not run cleanly, with a pointer to diagnose.
 
-    The summary table still renders a row for a Copilot invocation that errored
-    out immediately (e.g. a bad working directory) -- just with zero turns. That
-    makes a broken run look deceptively clean, so surface those cases explicitly
-    and point at the captured stdout for diagnosis.
+    The summary table still renders a row for a Copilot invocation that errored out
+    immediately (e.g. bad auth or a bad working directory) -- just with zero turns.
+    That makes a broken run look deceptively clean. We surface harness/infra failures
+    explicitly, classify them (harness vs copilot), and point at the exact artifact to
+    inspect (its ``stdout.txt``).
     """
     problems: list[str] = []
     for vr in run.variants:
         for trial in vr.trials:
-            no_log = trial.metrics.n_turns == 0
-            failed = trial.exit_code != 0
-            if not (no_log or failed):
+            if not trial.failed:
                 continue
             trial_dir = layout.trial_dir(
                 experiment.slug, run.run_id, vr.variant.slug, trial.trial_no
             )
-            reasons = []
-            if failed:
-                reasons.append(f"copilot exit={trial.exit_code}")
-            if no_log:
-                reasons.append("no session log captured (0 turns)")
+            label = (
+                "harness failure" if trial.status == "harness_error" else "copilot did not run"
+            )
+            detail = trial.error or trial.status
+            artifact = trial.error_artifact or "stdout.txt"
             problems.append(
-                f"  {vr.variant.slug}/{trial.trial_no:03d}: {', '.join(reasons)}\n"
-                f"      -> {trial_dir / 'stdout.jsonl'}"
+                f"  {vr.variant.slug}/{trial.trial_no:03d}: {label} — {detail}\n"
+                f"      -> {trial_dir / artifact}"
             )
     if not problems:
         return
     err.print(
-        f"[yellow]Warning:[/yellow] Copilot may not have run for {len(problems)} trial(s). "
-        "Inspect the captured stdout:"
+        f"[yellow]Warning:[/yellow] run status [bold]{run.status}[/bold] — "
+        f"{len(problems)} trial(s) failed in the harness (not the experiment). "
+        "Inspect the captured output:"
     )
     for line in problems:
         err.print(f"[yellow]{line}[/yellow]")

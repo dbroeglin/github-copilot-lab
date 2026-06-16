@@ -36,6 +36,12 @@ class Invocation:
     stdout_path: Path
     session_state_root: Path
     env_overrides: dict[str, str] = field(default_factory=dict)
+    # Absolute path where Copilot should write its markdown session transcript
+    # (``--share``). Kept *outside* the workspace so it never pollutes the diff.
+    share_path: Path | None = None
+    # Environment variable names Copilot must redact from its output and strip from
+    # sub-shells (``--secret-env-vars``): the injected GitHub token and BYOK secrets.
+    secret_env_names: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -80,6 +86,16 @@ def build_args(inv: Invocation) -> list[str]:
         args += ["--allow-tool", tool]
     for tool in v.deny_tools:
         args += ["--deny-tool", tool]
+    # Redact injected token + BYOK secrets from Copilot's output (stdout, the shared
+    # markdown transcript) and strip them from any shell/MCP sub-environments. Passed
+    # as a single ``=``-joined token so the variadic option can't swallow later flags.
+    if inv.secret_env_names:
+        args.append(f"--secret-env-vars={','.join(inv.secret_env_names)}")
+    # Write a human-readable markdown transcript of the session after completion. An
+    # absolute path is required (and keeps it out of the workspace; ``--share`` would
+    # otherwise default to the cwd, which is the diffed workspace).
+    if inv.share_path is not None:
+        args.append(f"--share={Path(inv.share_path).resolve()}")
     args += v.extra_args
     return args
 

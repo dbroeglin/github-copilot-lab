@@ -48,7 +48,7 @@ uv sync
 # validate the whole pipeline without spending credits (mock Copilot; persists nothing)
 uv run copilot-experiments run --dry-run
 
-# run for real (requires an authenticated `copilot`, or BYOK env vars), then inspect it
+# run for real (preflights GitHub auth: COPILOT_GITHUB_TOKEN/GH_TOKEN/GITHUB_TOKEN or `gh auth login`)
 uv run copilot-experiments run
 uv run copilot-experiments show --last
 ```

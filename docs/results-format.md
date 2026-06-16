@@ -19,10 +19,11 @@ results/
                 ├── variant.json               # variant config (secrets redacted)
                 └── trials/
                     └── <NNN>/                 # zero-padded trial number, e.g. 001
-                        ├── meta.json          # session id, exit code, duration, success
+                        ├── meta.json          # session id, exit code, duration, success, status
                         ├── prompt.md          # exact prompt sent to Copilot
-                        ├── stdout.jsonl       # copilot --output-format json stream
-                        ├── events.jsonl       # copied session events (metrics source)
+                        ├── stdout.txt         # raw copilot stdout/stderr (diagnostics)
+                        ├── session.md         # copilot's markdown transcript (--share)
+                        ├── events.jsonl       # copied session events (structured source)
                         ├── metrics.json       # parsed Metrics
                         ├── analysis.json      # SessionAnalysis (rich session overview)
                         ├── workspace.diff      # git diff of Copilot's changes
@@ -76,7 +77,28 @@ the `analyze` command renders with Rich, and is the data contract a future web e
 consume. See [`docs/analysis.md`](analysis.md) for the field reference.
 
 ### `meta.json`
-Per-trial summary: `trial_no`, `session_id`, `exit_code`, `duration_s`, `success`, `workspace`.
+Per-trial summary: `trial_no`, `session_id`, `exit_code`, `duration_s`, `success`, `status`,
+`error`, `error_artifact`, `workspace`.
+
+`status` classifies the *harness* outcome (orthogonal to `success`, which is the experiment's
+own verify result):
+
+| `status` | Meaning |
+| --- | --- |
+| `ok` | Copilot ran to completion. Whether the task was *solved* is `success`. |
+| `copilot_failed` | Copilot was invoked but exited non-zero or produced no session log (e.g. an authentication failure or a bad working directory). |
+| `harness_error` | The harness pipeline itself raised (e.g. provisioning or diffing failed). |
+
+When `status != ok`, `error` is a short message and `error_artifact` names the file inside the
+trial directory to inspect (usually `stdout.txt`). The run rolls these up into `run.json`'s
+`status`: `completed` (all `ok`), `partial` (some failed), or `failed` (none ran cleanly). The
+`run` command exits `2` when a run is `partial` or `failed`.
+
+### `stdout.txt` and `session.md`
+`stdout.txt` is the raw combined stdout/stderr of the `copilot` process — plain text, which is
+exactly what an auth/usage error is, so it is the first place to look when a trial fails.
+`session.md` is Copilot's own human-readable markdown transcript of the session, written via
+`copilot --share`; it is absent if Copilot never started.
 
 ## SQLite index (`results/index.db`)
 
@@ -90,7 +112,7 @@ trials(id PK, run_id, variant_slug, trial_no, session_id, exit_code, duration_s,
        n_turns, n_tool_calls, n_tool_failures, input_tokens, output_tokens, total_tokens,
        cache_read_tokens, cache_write_tokens, input_tokens_noncached, reasoning_tokens,
        aiu, api_duration_ms, n_requests, peak_context_tokens, n_compactions, n_truncations,
-       files_modified, lines_added, lines_removed, model)
+       files_modified, lines_added, lines_removed, model, status, error)
 ```
 
 Rebuild it any time:
@@ -139,4 +161,10 @@ GROUP BY variant_slug;
 
 Copilot's own `--log-dir` debug log is **not** kept: it is written to an ephemeral temp dir and
 deleted after each trial (see [ADR-0010](adr/0010-keep-secrets-and-debug-logs-out-of-results.md)).
-The captured `stdout.jsonl` and `events.jsonl` are the durable record.
+The captured `stdout.txt` and `events.jsonl` are the durable record.
+
+The GitHub token used to authenticate Copilot is resolved and injected by the harness (see
+[ADR-0012](adr/0012-auth-preflight-and-trial-diagnostics.md)). It is injected only into each
+trial's runtime environment — never written to an artifact or logged — and its variable name is
+passed to `copilot --secret-env-vars` so Copilot redacts it from `stdout.txt`, `session.md`, and
+any sub-shell or MCP environment.

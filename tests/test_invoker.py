@@ -116,6 +116,42 @@ def test_build_args_translates_variant_flags():
     assert args.count("--deny-tool") == 1
 
 
+def test_build_args_emits_share_and_secret_env_vars(tmp_path: Path):
+    inv = Invocation(
+        prompt="P",
+        workspace=tmp_path / "ws",
+        session_id="s",
+        variant=Variant(name="v"),
+        log_dir=tmp_path / "logs",
+        stdout_path=tmp_path / "stdout.txt",
+        session_state_root=tmp_path / "state",
+        share_path=tmp_path / "session.md",
+        secret_env_names=["COPILOT_GITHUB_TOKEN", "GH_TOKEN"],
+    )
+    args = build_args(inv)
+
+    share = next(a for a in args if a.startswith("--share="))
+    assert Path(share.split("=", 1)[1]) == (tmp_path / "session.md").resolve()
+
+    secret = next(a for a in args if a.startswith("--secret-env-vars="))
+    assert secret.split("=", 1)[1] == "COPILOT_GITHUB_TOKEN,GH_TOKEN"
+
+
+def test_build_args_omits_share_and_secrets_when_unset(tmp_path: Path):
+    inv = Invocation(
+        prompt="P",
+        workspace=tmp_path / "ws",
+        session_id="s",
+        variant=Variant(name="v"),
+        log_dir=tmp_path / "logs",
+        stdout_path=tmp_path / "stdout.txt",
+        session_state_root=tmp_path / "state",
+    )
+    args = build_args(inv)
+    assert not any(a.startswith("--share") for a in args)
+    assert not any(a.startswith("--secret-env-vars") for a in args)
+
+
 def test_build_args_uses_absolute_workspace_and_log_dir(tmp_path: Path):
     # Regression: a *relative* ``-C`` was resolved against the process cwd (already
     # the workspace) and doubled -> ENAMETOOLONG -> Copilot no-op. ``-C`` and

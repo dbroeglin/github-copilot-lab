@@ -18,6 +18,7 @@ from ._util import (
     write_text,
 )
 from .analysis import analyze_events
+from .auth import INJECTED_TOKEN_ENV_VAR, secret_env_names
 from .index import connect, index_run_dir
 from .invoker import CopilotInvoker, Invocation, Invoker, MockInvoker
 from .models import (
@@ -25,7 +26,9 @@ from .models import (
     DryRunReport,
     Experiment,
     ExperimentRun,
+    Metrics,
     TrialResult,
+    TrialStatus,
     Variant,
     VariantResult,
 )
@@ -56,6 +59,7 @@ def run_experiment(
     results_root: Path | None = None,
     session_state_root: Path | None = None,
     copilot_binary: str = "copilot",
+    github_token: str | None = None,
     progress: Callable[[str], None] | None = None,
     copilot_stream: Callable[[str], None] | None = None,
 ) -> ExperimentRun:
@@ -74,6 +78,11 @@ def run_experiment(
         throwaway temp dir by :func:`dry_run_experiment` so nothing is persisted.
     session_state_root:
         Where Copilot session state lives. Defaults to ``~/.copilot/session-state``.
+    github_token:
+        Token injected into every trial's environment so Copilot is authenticated
+        without relying on ambient login. Resolved and preflighted by the CLI (see
+        :mod:`copilot_experiments.auth`). It is never persisted or logged, and the
+        variable carrying it is added to ``copilot --secret-env-vars``.
     progress:
         Optional sink for high-level per-trial phase messages (``--verbose``).
     copilot_stream:
@@ -102,7 +111,8 @@ def run_experiment(
     for variant in experiment.variants:
         _report(progress, f"variant {variant.slug}: {variant.trials} trial(s)")
         vr = _run_variant(
-            experiment, variant, layout, run_id, invoker, session_state_root, progress
+            experiment, variant, layout, run_id, invoker, session_state_root,
+            github_token, progress,
         )
         run.variants.append(vr)
         write_json(
@@ -111,7 +121,7 @@ def run_experiment(
         )
 
     run.finished_at = iso(utcnow())
-    run.status = "completed"
+    run.status = run.rollup_status()
 
     # Write run manifest, summary, and report.
     write_json(run_dir / "run.json", run.model_dump(mode="json"))
@@ -136,6 +146,7 @@ def _run_variant(
     run_id: str,
     invoker: Invoker,
     session_state_root: Path | None,
+    github_token: str | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> VariantResult:
     vr = VariantResult(variant=variant)
@@ -149,6 +160,7 @@ def _run_variant(
                 run_id,
                 invoker,
                 session_state_root,
+                github_token,
                 progress,
             )
         )
@@ -163,6 +175,7 @@ def _run_trial(
     run_id: str,
     invoker: Invoker,
     session_state_root: Path | None,
+    github_token: str | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> TrialResult:
     task = experiment.task
@@ -170,18 +183,34 @@ def _run_trial(
     trial_dir = layout.trial_dir(experiment.slug, run_id, variant.slug, trial_no)
     trial_dir.mkdir(parents=True, exist_ok=True)
     workspace = trial_dir / "workspace"
-    stdout_path = trial_dir / "stdout.jsonl"
+    # ``stdout.txt``: the raw combined stdout/stderr of the copilot process (plain text,
+    # which is what an auth/usage error actually is). ``session.md``: Copilot's own
+    # markdown transcript (``--share``). ``events.jsonl`` (copied below) stays the
+    # structured data source.
+    stdout_path = trial_dir / "stdout.txt"
+    share_path = trial_dir / "session.md"
     # Copilot's own --log-dir debug log is large (megabytes) and echoes masked auth
     # material; keep it in an ephemeral temp dir so it never lands under results/.
     # The session events.jsonl (copied below) is our real data source -- see ADR-0010.
     log_dir = Path(tempfile.mkdtemp(prefix="copilot-log-"))
+
+    session_id = new_session_id()
+    metrics = Metrics()
+    success: bool | None = None
+    exit_code = -1
+    duration_s = 0.0
+    status: TrialStatus = "ok"
+    error: str | None = None
+    error_artifact: str | None = None
 
     try:
         write_text(trial_dir / "prompt.md", task.prompt)
         provision(task, workspace, layout.root)
         _report(progress, f"[{tag}] workspace provisioned -> {workspace}")
 
-        session_id = new_session_id()
+        env_overrides: dict[str, str] = {}
+        if github_token:
+            env_overrides[INJECTED_TOKEN_ENV_VAR] = github_token
         inv = Invocation(
             prompt=task.prompt,
             workspace=workspace,
@@ -190,12 +219,19 @@ def _run_trial(
             log_dir=log_dir,
             stdout_path=stdout_path,
             session_state_root=session_state_root or _default_session_state_root(),
+            env_overrides=env_overrides,
+            share_path=share_path,
+            secret_env_names=secret_env_names(
+                variant.env, byok_secrets=variant.provider is not None
+            ),
         )
         _report(progress, f"[{tag}] invoking copilot (session {session_id})")
         result = invoker.run(inv)
+        exit_code = result.exit_code
+        duration_s = result.duration_s
         _report(
             progress,
-            f"[{tag}] copilot exited {result.exit_code} in {result.duration_s:.1f}s",
+            f"[{tag}] copilot exited {exit_code} in {duration_s:.1f}s",
         )
 
         # Collect the session events and parse metrics.
@@ -203,7 +239,7 @@ def _run_trial(
         events = load_events(trial_dir / "events.jsonl")
         metrics = parse_metrics(events)
         if metrics.duration_s is None:
-            metrics.duration_s = round(result.duration_s, 3)
+            metrics.duration_s = round(duration_s, 3)
         _report(
             progress,
             f"[{tag}] session log: {len(events)} events -> {metrics.n_turns} turns, "
@@ -218,7 +254,6 @@ def _run_trial(
         write_text(trial_dir / "workspace.diff", capture_diff(workspace))
 
         # Run the verification command, if any.
-        success: bool | None = None
         if task.verify:
             code, output = run_shell(task.verify, workspace)
             success = code == 0
@@ -228,26 +263,52 @@ def _run_trial(
             )
             _report(progress, f"[{tag}] verify: {'pass' if success else 'fail'} (exit {code})")
 
-        trial = TrialResult(
-            trial_no=trial_no,
-            session_id=session_id,
-            exit_code=result.exit_code,
-            duration_s=round(result.duration_s, 3),
-            success=success,
-            metrics=metrics,
-        )
-        write_json(trial_dir / "meta.json", {
-            "trial_no": trial_no,
-            "session_id": session_id,
-            "exit_code": result.exit_code,
-            "duration_s": trial.duration_s,
-            "success": success,
-            "workspace": str(workspace),
-        })
-        write_json(trial_dir / "metrics.json", metrics.model_dump(mode="json"))
-        return trial
+        # Copilot ran, but did it actually do anything? A non-zero exit or an empty
+        # session log (0 turns) means it never really started -- an infra/harness
+        # problem (bad auth, bad working dir), not the experiment failing on merit.
+        no_session_log = len(events) == 0 and metrics.n_turns == 0
+        if exit_code != 0 or no_session_log:
+            status = "copilot_failed"
+            reasons = []
+            if exit_code != 0:
+                reasons.append(f"copilot exited {exit_code}")
+            if no_session_log:
+                reasons.append("no session log captured (0 turns)")
+            error = "; ".join(reasons)
+            error_artifact = stdout_path.name
+            _report(progress, f"[{tag}] copilot did not run cleanly: {error}")
+    except Exception as exc:  # noqa: BLE001 - any pipeline failure is a harness error
+        status = "harness_error"
+        error = f"{type(exc).__name__}: {exc}"
+        error_artifact = stdout_path.name if stdout_path.exists() else None
+        _report(progress, f"[{tag}] harness error: {error}")
     finally:
         force_rmtree(log_dir)
+
+    trial = TrialResult(
+        trial_no=trial_no,
+        session_id=session_id,
+        exit_code=exit_code,
+        duration_s=round(duration_s, 3),
+        success=success,
+        metrics=metrics,
+        status=status,
+        error=error,
+        error_artifact=error_artifact,
+    )
+    write_json(trial_dir / "meta.json", {
+        "trial_no": trial_no,
+        "session_id": session_id,
+        "exit_code": exit_code,
+        "duration_s": trial.duration_s,
+        "success": success,
+        "status": status,
+        "error": error,
+        "error_artifact": error_artifact,
+        "workspace": str(workspace),
+    })
+    write_json(trial_dir / "metrics.json", metrics.model_dump(mode="json"))
+    return trial
 
 
 def _default_session_state_root() -> Path:

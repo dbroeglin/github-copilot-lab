@@ -6,8 +6,9 @@ import json
 import sqlite3
 from pathlib import Path
 
-from copilot_experiments import Experiment, dry_run_experiment, run_experiment
+from copilot_experiments import Experiment, Task, Variant, dry_run_experiment, run_experiment
 from copilot_experiments.invoker import MockInvoker
+from copilot_experiments.models import ExperimentRun, TrialResult, VariantResult
 from copilot_experiments.storage import Layout
 
 
@@ -43,6 +44,7 @@ def test_run_experiment_produces_artifacts(repo_root: Path, experiment: Experime
         assert (td / "metrics.json").exists()
         assert (td / "analysis.json").exists()
         assert (td / "events.jsonl").exists()
+        assert (td / "stdout.txt").exists()
         assert (td / "prompt.md").exists()
         # Copilot's bulky --log-dir debug log must never be persisted under results/.
         assert not (td / "logs").exists()
@@ -140,3 +142,102 @@ def test_dry_run_flags_broken_plumbing(repo_root: Path, experiment: Experiment):
     assert diff_check.ok is False
     # Still leaves nothing behind, even on failure.
     assert not (repo_root / "results").exists()
+
+
+# --------------------------------------------------------------------------- #
+# Harness vs. experiment failures: status enum + roll-up
+# --------------------------------------------------------------------------- #
+def test_clean_run_marks_trials_ok_and_run_completed(repo_root: Path, experiment: Experiment):
+    run = _mock_run(experiment, repo_root, solver=solve)
+    assert run.status == "completed"
+    assert all(t.status == "ok" for t in run.all_trials)
+    assert run.n_failed_trials == 0
+
+
+def test_copilot_nonzero_exit_is_a_harness_failure(repo_root: Path, experiment: Experiment):
+    # Copilot was invoked but exited non-zero (the auth-failure scenario): every trial
+    # is flagged ``copilot_failed`` and the run rolls up to ``failed`` -- not a clean
+    # "0% success" that hides a broken harness.
+    run = _mock_run(experiment, repo_root, exit_code=1)
+    assert run.status == "failed"
+    assert all(t.status == "copilot_failed" for t in run.all_trials)
+    for vr in run.variants:
+        for t in vr.trials:
+            assert t.error and "exited 1" in t.error
+            assert t.error_artifact == "stdout.txt"
+
+    # The status is durable on disk.
+    layout = Layout(repo_root)
+    meta_path = layout.trial_dir(experiment.slug, run.run_id, "alpha", 1) / "meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert meta["status"] == "copilot_failed"
+
+
+def test_harness_error_on_provision_failure_still_records_trial(repo_root: Path):
+    # A missing fixture makes provisioning raise: that is a harness error, the run
+    # continues, and a trial record (status=harness_error) is still written.
+    broken = Experiment(
+        name="Broken",
+        task=Task(prompt="x", fixture="fixtures/does_not_exist"),
+        variants=[Variant(name="alpha")],
+    )
+    run = _mock_run(broken, repo_root)
+    assert run.status == "failed"
+    trial = run.all_trials[0]
+    assert trial.status == "harness_error"
+    assert "WorkspaceError" in (trial.error or "")
+
+    layout = Layout(repo_root)
+    meta = layout.trial_dir(broken.slug, run.run_id, "alpha", 1) / "meta.json"
+    assert json.loads(meta.read_text(encoding="utf-8"))["status"] == "harness_error"
+
+
+def test_partial_run_when_some_variants_fail(repo_root: Path):
+    # One variant errors in the harness while the others run cleanly -> ``partial``.
+    failing = Variant(name="alpha")
+    failing_solver_run = ExperimentRun(
+        run_id="r", experiment_slug="s", experiment_name="n", started_at="t",
+        variants=[
+            VariantResult(variant=failing, trials=[
+                TrialResult(trial_no=1, session_id="a", exit_code=0, duration_s=1.0, status="ok"),
+                TrialResult(
+                    trial_no=2, session_id="b", exit_code=1, duration_s=1.0,
+                    status="copilot_failed",
+                ),
+            ]),
+        ],
+    )
+    assert failing_solver_run.rollup_status() == "partial"
+    assert failing_solver_run.n_failed_trials == 1
+
+
+def test_token_injected_into_env_and_flagged_secret(repo_root: Path, experiment: Experiment):
+    # The resolved token reaches each trial's env_overrides and the variable carrying
+    # it is added to copilot's --secret-env-vars, but never to a stored artifact.
+    seen: list = []
+
+    class RecordingInvoker(MockInvoker):
+        def run(self, inv):  # noqa: ANN001 - test double
+            seen.append(inv)
+            return super().run(inv)
+
+    run = run_experiment(
+        experiment,
+        root=repo_root,
+        invoker=RecordingInvoker(solver=solve),
+        session_state_root=repo_root / ".session-state",
+        github_token="secret-token-123",
+    )
+    assert run.status == "completed"
+    assert seen, "invoker was never called"
+    for inv in seen:
+        assert inv.env_overrides.get("COPILOT_GITHUB_TOKEN") == "secret-token-123"
+        assert "COPILOT_GITHUB_TOKEN" in inv.secret_env_names
+        assert inv.share_path is not None and inv.share_path.name == "session.md"
+
+    # The token must not have leaked into any persisted artifact.
+    layout = Layout(repo_root)
+    run_dir = layout.run_dir(experiment.slug, run.run_id)
+    for path in run_dir.rglob("*"):
+        if path.is_file():
+            assert "secret-token-123" not in path.read_text(encoding="utf-8", errors="ignore")

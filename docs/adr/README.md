@@ -27,3 +27,5 @@ We follow the lightweight format popularized by
 | [0008](0008-dry-run-is-ephemeral-plumbing-check.md) | `--dry-run` is an ephemeral, validating plumbing check | Accepted |
 | [0009](0009-absolute-workspace-path-for-copilot.md) | Copilot is always invoked with an absolute workspace path | Accepted |
 | [0010](0010-keep-secrets-and-debug-logs-out-of-results.md) | Keep secrets and bulky debug logs out of stored results | Accepted |
+| [0011](0011-token-economics-from-session-shutdown.md) | Token economics from `session.shutdown` | Accepted |
+| [0012](0012-auth-preflight-and-trial-diagnostics.md) | Auth preflight, harness-failure status, and richer trial diagnostics | Accepted |

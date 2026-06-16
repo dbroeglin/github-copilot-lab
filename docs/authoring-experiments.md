@@ -71,7 +71,9 @@ mkdir -p fixtures/my_fixture   # put broken code + a test that fails
 # 3. Validate the whole pipeline without spending credits (persists nothing):
 uv run copilot-experiments run --dry-run
 
-# 4. Run for real (needs an authenticated `copilot`, or BYOK env):
+# 4. Run for real. The harness preflights GitHub auth first: it uses
+#    COPILOT_GITHUB_TOKEN / GH_TOKEN / GITHUB_TOKEN, or falls back to `gh auth token`,
+#    and aborts with guidance if none is found. (BYOK provider secrets still come from env.)
 uv run copilot-experiments run
 
 # 5. Inspect the produced run:
