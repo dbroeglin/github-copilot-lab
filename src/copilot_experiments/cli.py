@@ -22,6 +22,26 @@ from .scaffold import ScaffoldError, init_experiment_repo
 from .sessionlog import load_events
 from .storage import Layout
 
+
+def _force_utf8_streams() -> None:
+    """Make stdout/stderr UTF-8 so Rich glyphs (e.g. ``✓``) don't crash.
+
+    On Windows the console and redirected pipes default to a legacy code page
+    (cp1252), which raises ``UnicodeEncodeError`` on non-Latin-1 characters.
+    ``errors="replace"`` is a belt-and-braces fallback for any remaining
+    unencodable glyph.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):
+                pass
+
+
+_force_utf8_streams()
+
 app = typer.Typer(
     add_completion=False,
     help="Build and analyze GitHub Copilot research experiments.",
