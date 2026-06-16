@@ -8,7 +8,7 @@ from pathlib import Path
 
 from copilot_experiments import Experiment, Task, Variant, dry_run_experiment, run_experiment
 from copilot_experiments.invoker import MockInvoker
-from copilot_experiments.models import ExperimentRun, TrialResult, VariantResult
+from copilot_experiments.models import ExperimentRun, TaskResult, TrialResult, VariantResult
 from copilot_experiments.storage import Layout
 
 
@@ -36,8 +36,8 @@ def test_run_experiment_produces_artifacts(repo_root: Path, experiment: Experime
     assert (run_dir / "summary.json").exists()
     assert (run_dir / "summary.md").exists()
 
-    # alpha has 1 trial, beta has 2 -> 3 trial dirs total.
-    trial_dirs = list((run_dir / "variants").glob("*/trials/*"))
+    # alpha has 1 trial, beta has 2 -> 3 trial dirs total (single task suite).
+    trial_dirs = list((run_dir / "variants").glob("*/tasks/*/trials/*"))
     assert len(trial_dirs) == 3
     for td in trial_dirs:
         assert (td / "meta.json").exists()
@@ -52,19 +52,19 @@ def test_run_experiment_produces_artifacts(repo_root: Path, experiment: Experime
 
 def test_run_experiment_without_solver_fails_verify(repo_root: Path, experiment: Experiment):
     run = _mock_run(experiment, repo_root)
-    successes = [t.success for vr in run.variants for t in vr.trials]
+    successes = [t.success for vr in run.variants for t in vr.all_trials]
     assert all(s is False for s in successes)
 
 
 def test_run_experiment_with_solver_succeeds(repo_root: Path, experiment: Experiment):
     run = _mock_run(experiment, repo_root, solver=solve)
-    successes = [t.success for vr in run.variants for t in vr.trials]
+    successes = [t.success for vr in run.variants for t in vr.all_trials]
     assert all(s is True for s in successes)
 
     # The on-disk artifacts must corroborate success end-to-end.
     layout = Layout(repo_root)
     run_dir = layout.run_dir(experiment.slug, run.run_id)
-    trial = run_dir / "variants" / "alpha" / "trials" / "001"
+    trial = run_dir / "variants" / "alpha" / "tasks" / "task-001" / "trials" / "001"
 
     diff = (trial / "workspace.diff").read_text(encoding="utf-8")
     assert "SOLVED" in diff and diff.strip() != ""
@@ -90,7 +90,7 @@ def test_run_experiment_forwards_progress_per_trial(repo_root: Path, experiment:
 
     # Per-variant header plus a distinct, tagged set of phase lines per trial.
     assert any(m.startswith("variant beta: 2 trial(s)") for m in msgs)
-    for tag in ("alpha/001", "beta/001", "beta/002"):
+    for tag in ("alpha/task-001/001", "beta/task-001/001", "beta/task-001/002"):
         assert any(m.startswith(f"[{tag}] invoking copilot") for m in msgs)
         assert any(m.startswith(f"[{tag}] session log:") for m in msgs)
         assert any(m.startswith(f"[{tag}] verify:") for m in msgs)
@@ -103,12 +103,50 @@ def test_run_experiment_populates_index(repo_root: Path, experiment: Experiment)
     try:
         runs = conn.execute("SELECT run_id FROM runs").fetchall()
         variants = conn.execute("SELECT variant_slug FROM variants").fetchall()
-        trials = conn.execute("SELECT trial_no FROM trials").fetchall()
+        trials = conn.execute("SELECT trial_no, task_slug FROM trials").fetchall()
     finally:
         conn.close()
     assert [r[0] for r in runs] == [run.run_id]
     assert {v[0] for v in variants} == {"alpha", "beta"}
     assert len(trials) == 3
+    # Single-task sugar still produces exactly one task slug across all trials.
+    assert {t[1] for t in trials} == {"task-001"}
+
+
+def test_run_multitask_experiment(repo_root: Path, multitask_experiment: Experiment):
+    run = _mock_run(multitask_experiment, repo_root, solver=solve)
+    layout = Layout(repo_root)
+    run_dir = layout.run_dir(multitask_experiment.slug, run.run_id)
+
+    # Per-task dirs exist for every variant: 2 variants x 2 tasks = 4 task dirs.
+    task_dirs = sorted(p.name for p in (run_dir / "variants").glob("*/tasks/*"))
+    assert task_dirs == ["first-task", "first-task", "second-task", "second-task"]
+
+    # Each variant result nests two tasks; suite measures reflect all-pass solver.
+    for vr in run.variants:
+        assert len(vr.tasks) == 2
+        assert vr.mean_resolved_rate == 1.0
+        assert vr.resolved_at_k_rate == 1.0
+
+    # Summary records the task axis and the two suite measures side by side.
+    summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary["n_tasks"] == 2
+    for v in summary["variants"]:
+        assert v["n_tasks"] == 2
+        assert v["mean_resolved_rate"] == 1.0
+        assert v["resolved_at_k_rate"] == 1.0
+        assert {t["task"] for t in v["tasks"]} == {"first-task", "second-task"}
+
+    # Index carries the task dimension.
+    conn = sqlite3.connect(str(layout.index_db))
+    try:
+        tasks = conn.execute("SELECT DISTINCT task_slug FROM tasks").fetchall()
+        trials = conn.execute("SELECT task_slug FROM trials").fetchall()
+    finally:
+        conn.close()
+    assert {t[0] for t in tasks} == {"first-task", "second-task"}
+    # alpha: 2 tasks x 1 trial + beta: 2 tasks x 2 trials = 6 trials.
+    assert len(trials) == 6
 
 
 def test_dry_run_validates_and_leaves_nothing_behind(repo_root: Path, experiment: Experiment):
@@ -162,13 +200,15 @@ def test_copilot_nonzero_exit_is_a_harness_failure(repo_root: Path, experiment: 
     assert run.status == "failed"
     assert all(t.status == "copilot_failed" for t in run.all_trials)
     for vr in run.variants:
-        for t in vr.trials:
+        for t in vr.all_trials:
             assert t.error and "exited 1" in t.error
             assert t.error_artifact == "stdout.txt"
 
     # The status is durable on disk.
     layout = Layout(repo_root)
-    meta_path = layout.trial_dir(experiment.slug, run.run_id, "alpha", 1) / "meta.json"
+    meta_path = (
+        layout.trial_dir(experiment.slug, run.run_id, "alpha", "task-001", 1) / "meta.json"
+    )
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     assert meta["status"] == "copilot_failed"
 
@@ -188,7 +228,7 @@ def test_harness_error_on_provision_failure_still_records_trial(repo_root: Path)
     assert "WorkspaceError" in (trial.error or "")
 
     layout = Layout(repo_root)
-    meta = layout.trial_dir(broken.slug, run.run_id, "alpha", 1) / "meta.json"
+    meta = layout.trial_dir(broken.slug, run.run_id, "alpha", "task-001", 1) / "meta.json"
     assert json.loads(meta.read_text(encoding="utf-8"))["status"] == "harness_error"
 
 
@@ -198,12 +238,16 @@ def test_partial_run_when_some_variants_fail(repo_root: Path):
     failing_solver_run = ExperimentRun(
         run_id="r", experiment_slug="s", experiment_name="n", started_at="t",
         variants=[
-            VariantResult(variant=failing, trials=[
-                TrialResult(trial_no=1, session_id="a", exit_code=0, duration_s=1.0, status="ok"),
-                TrialResult(
-                    trial_no=2, session_id="b", exit_code=1, duration_s=1.0,
-                    status="copilot_failed",
-                ),
+            VariantResult(variant=failing, tasks=[
+                TaskResult(task_slug="task-001", trials=[
+                    TrialResult(
+                        trial_no=1, session_id="a", exit_code=0, duration_s=1.0, status="ok"
+                    ),
+                    TrialResult(
+                        trial_no=2, session_id="b", exit_code=1, duration_s=1.0,
+                        status="copilot_failed",
+                    ),
+                ]),
             ]),
         ],
     )

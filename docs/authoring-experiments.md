@@ -18,6 +18,7 @@ from copilot_experiments import Experiment, Task, Variant
 
 | Field | Meaning |
 | --- | --- |
+| `name` | Optional human label; slugified for the results directory (`tasks/<slug>/`). Unnamed tasks become `task-001`, `task-002`, …. |
 | `prompt` | The instruction handed to `copilot -p`. |
 | `fixture` | Path (relative to the repo) to a directory copied fresh as the starting workspace for every trial. |
 | `repo` / `ref` | Alternative to `fixture`: `git clone` a repository and optionally check out a branch/tag/commit. |
@@ -44,6 +45,10 @@ self-contained so trials are comparable.
 
 ### `Experiment`
 
+An experiment is `Tasks × Variants × Trials`. Use the singular `task=` for a single-task
+experiment, or `tasks=[...]` to run a **suite** of tasks through the same variant matrix
+(exactly one of the two is required).
+
 ```python
 experiment = Experiment(
     name="Fix the calculator bug",
@@ -59,6 +64,27 @@ experiment = Experiment(
     ],
 )
 ```
+
+A task suite — name each task so it gets a stable `tasks/<slug>/` directory:
+
+```python
+suite = Experiment(
+    name="Calculator fixes",
+    description="Several independent bugs, run through the same matrix.",
+    tasks=[
+        Task(name="Fix multiply", prompt="...", fixture="fixtures/buggy_multiply",
+             verify="python -m pytest -q"),
+        Task(name="Fix divide", prompt="...", fixture="fixtures/buggy_divide",
+             verify="python -m pytest -q"),
+    ],
+    variants=[Variant(name="opus-medium", model="claude-opus-4.7", trials=3)],
+)
+```
+
+The report adds two suite-coverage measures per variant: **mean-success** (mean of each task's
+trial success rate) and **resolved@k** (the fraction of tasks where *any* trial passed). This is
+option B of [ADR-0012](adr/0012-task-suite-as-experiment-axis.md); the sequential runner is best
+for handfuls of tasks, not thousands of benchmark instances.
 
 ## Workflow
 

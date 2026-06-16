@@ -27,6 +27,8 @@ from .models import (
     Experiment,
     ExperimentRun,
     Metrics,
+    Task,
+    TaskResult,
     TrialResult,
     TrialStatus,
     Variant,
@@ -150,12 +152,13 @@ def _run_variant(
     progress: Callable[[str], None] | None = None,
 ) -> VariantResult:
     vr = VariantResult(variant=variant)
-    for trial_no in range(1, variant.trials + 1):
-        vr.trials.append(
-            _run_trial(
+    for task_slug, task in experiment.iter_tasks():
+        vr.tasks.append(
+            _run_task(
                 experiment,
                 variant,
-                trial_no,
+                task_slug,
+                task,
                 layout,
                 run_id,
                 invoker,
@@ -167,9 +170,48 @@ def _run_variant(
     return vr
 
 
+def _run_task(
+    experiment: Experiment,
+    variant: Variant,
+    task_slug: str,
+    task: Task,
+    layout: Layout,
+    run_id: str,
+    invoker: Invoker,
+    session_state_root: Path | None,
+    github_token: str | None = None,
+    progress: Callable[[str], None] | None = None,
+) -> TaskResult:
+    _report(progress, f"variant {variant.slug} / task {task_slug}: {variant.trials} trial(s)")
+    task_dir = layout.task_dir(experiment.slug, run_id, variant.slug, task_slug)
+    task_dir.mkdir(parents=True, exist_ok=True)
+    write_json(task_dir / "task.json", task.model_dump(mode="json", exclude_none=True))
+
+    tr = TaskResult(task_slug=task_slug, task_name=task.name, prompt=task.prompt)
+    for trial_no in range(1, variant.trials + 1):
+        tr.trials.append(
+            _run_trial(
+                experiment,
+                variant,
+                task_slug,
+                task,
+                trial_no,
+                layout,
+                run_id,
+                invoker,
+                session_state_root,
+                github_token,
+                progress,
+            )
+        )
+    return tr
+
+
 def _run_trial(
     experiment: Experiment,
     variant: Variant,
+    task_slug: str,
+    task: Task,
     trial_no: int,
     layout: Layout,
     run_id: str,
@@ -178,9 +220,8 @@ def _run_trial(
     github_token: str | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> TrialResult:
-    task = experiment.task
-    tag = f"{variant.slug}/{trial_no:03d}"
-    trial_dir = layout.trial_dir(experiment.slug, run_id, variant.slug, trial_no)
+    tag = f"{variant.slug}/{task_slug}/{trial_no:03d}"
+    trial_dir = layout.trial_dir(experiment.slug, run_id, variant.slug, task_slug, trial_no)
     trial_dir.mkdir(parents=True, exist_ok=True)
     workspace = trial_dir / "workspace"
     # ``stdout.txt``: the raw combined stdout/stderr of the copilot process (plain text,
@@ -361,8 +402,9 @@ def _validate_plumbing(
     whether each pipeline stage actually did its job."""
     checks: list[DryRunCheck] = []
     variant = experiment.variants[0]
+    task_slug, task = experiment.iter_tasks()[0]
     run_dir = layout.run_dir(experiment.slug, run.run_id)
-    trial_dir = layout.trial_dir(experiment.slug, run.run_id, variant.slug, 1)
+    trial_dir = layout.trial_dir(experiment.slug, run.run_id, variant.slug, task_slug, 1)
     workspace = trial_dir / "workspace"
 
     # 1. Workspace provisioned with a git baseline.
@@ -409,7 +451,7 @@ def _validate_plumbing(
     )
 
     # 6. Verification ran (we only assert it ran, not that it passed).
-    if experiment.task.verify:
+    if task.verify:
         checks.append(_check("verify ran", (trial_dir / "verify.json").exists()))
 
     # 7. Run-level summary written.
@@ -417,6 +459,15 @@ def _validate_plumbing(
         _check(
             "run summary written",
             (run_dir / "summary.json").exists() and (run_dir / "summary.md").exists(),
+        )
+    )
+
+    # 7b. Task axis present on disk (variants/<v>/tasks/<task>/...).
+    checks.append(
+        _check(
+            "task dir present",
+            layout.task_dir(experiment.slug, run.run_id, variant.slug, task_slug).is_dir(),
+            f"tasks/{task_slug}",
         )
     )
 

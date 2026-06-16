@@ -7,7 +7,7 @@ source of truth; the SQLite index is a derived cache that can be rebuilt at any 
 
 ```mermaid
 flowchart TD
-    EXP["Experiment (Python)\nTask + Variant[]"] --> RUN["run_experiment()"]
+    EXP["Experiment (Python)\nTask(s) + Variant[]"] --> RUN["run_experiment()"]
     RUN --> PROV["workspace.provision()\ncopy fixture / git clone + baseline commit"]
     PROV --> INV["invoker.run()\ncopilot -p --model ... --output-format json"]
     INV --> SS["~/.copilot/session-state/&lt;id&gt;/events.jsonl"]
@@ -28,12 +28,12 @@ flowchart TD
 
 | Concept | Type | Meaning |
 | --- | --- | --- |
-| **Experiment** | `Experiment` | A named `Task` plus the matrix of `Variant`s to run it under. |
-| **Task** | `Task` | The prompt + how to provision (`fixture` or `repo`/`ref`, `setup`) and `verify` the workspace. |
+| **Experiment** | `Experiment` | A named `Task` (or a `tasks=[...]` suite) plus the matrix of `Variant`s to run them under (`Tasks × Variants × Trials`). |
+| **Task** | `Task` | One unit of work: optional `name`, the prompt + how to provision (`fixture` or `repo`/`ref`, `setup`) and `verify` the workspace. |
 | **Variant** | `Variant` | One cell of the matrix: `model`, `reasoning_effort`, `agent`, `mode`, tool allow/deny, optional BYOK `provider`, extra `env`, and `trials` (repeat count). |
 | **ProviderConfig** | `ProviderConfig` | BYOK settings rendered to `COPILOT_PROVIDER_*` env vars. |
 | **Experiment run** | `ExperimentRun` | One execution of an experiment → `results/<exp>/<run-id>/`. |
-| **VariantResult / TrialResult** | result models | Per-variant aggregation and per-trial outcome (+ parsed `Metrics`). |
+| **VariantResult / TaskResult / TrialResult** | result models | Per-variant aggregation nests per-task (`TaskResult`) results, each holding per-trial outcomes (+ parsed `Metrics`). |
 | **SessionAnalysis** | `SessionAnalysis` | A rendering-agnostic overview of one session log (`ToolStat[]`, `TurnSummary[]`, totals, tokens). Persisted as `analysis.json`. |
 
 ## Modules
@@ -46,7 +46,7 @@ flowchart TD
 | `sessionlog.py` | Find and parse `events.jsonl` into `Metrics`. |
 | `analysis.py` | Derive a rich, rendering-agnostic `SessionAnalysis` from session events. |
 | `render.py` | Render a `SessionAnalysis` to the terminal with Rich (used by `analyze`). |
-| `runner.py` | Orchestrate variants × trials and write every artifact. |
+| `runner.py` | Orchestrate variants × tasks × trials and write every artifact. |
 | `storage.py` | The `results/` `Layout` and run discovery (`find_run`, `latest_run`). |
 | `index.py` | The SQLite schema, insert/reindex, and queries. |
 | `report.py` | Aggregate a run into `summary.json` / `summary.md`. |

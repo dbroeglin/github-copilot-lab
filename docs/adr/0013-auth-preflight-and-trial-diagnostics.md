@@ -1,4 +1,4 @@
-# 0012. Auth preflight, harness-failure status, and richer trial diagnostics
+# 0013. Auth preflight, harness-failure status, and richer trial diagnostics
 
 - **Status:** Accepted
 - **Date:** 2026-06-16

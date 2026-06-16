@@ -42,3 +42,30 @@ def experiment() -> Experiment:
             Variant(name="beta", model="model-b", trials=2),
         ],
     )
+
+
+@pytest.fixture
+def multitask_experiment() -> Experiment:
+    """A 2-task x 2-variant experiment exercising the task suite axis."""
+    return Experiment(
+        name="Suite Experiment",
+        description="A two-task suite used by the test suite.",
+        tasks=[
+            Task(
+                name="First Task",
+                prompt="Create a SOLVED file.",
+                fixture="fixtures/sample_task",
+                verify=_VERIFY,
+            ),
+            Task(
+                name="Second Task",
+                prompt="Create a SOLVED file.",
+                fixture="fixtures/sample_task",
+                verify=_VERIFY,
+            ),
+        ],
+        variants=[
+            Variant(name="alpha", model="model-a"),
+            Variant(name="beta", model="model-b", trials=2),
+        ],
+    )

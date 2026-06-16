@@ -12,18 +12,21 @@ Layout (inside an experiment repository)::
           variants/
             <variant-slug>/
               variant.json                      # variant config (secrets redacted)
-              trials/
-                <NNN>/
-                  meta.json                     # session id, exit code, duration, success, status
-                  prompt.md                     # exact prompt sent
-                  stdout.txt                    # raw copilot stdout/stderr (diagnostics)
-                  session.md                    # copilot's markdown transcript (--share)
-                  events.jsonl                  # copied session events (structured source)
-                  metrics.json                  # parsed metrics
-                  analysis.json                 # richer session analysis
-                  workspace.diff                # git diff of the workspace
-                  verify.json                   # verification result (if any)
-                  workspace/                    # the trial's working directory
+              tasks/
+                <task-slug>/
+                  task.json                     # task config (prompt, fixture, verify)
+                  trials/
+                    <NNN>/
+                      meta.json                 # session id, exit code, duration, success, status
+                      prompt.md                 # exact prompt sent
+                      stdout.txt                # raw copilot stdout/stderr (diagnostics)
+                      session.md                # copilot's markdown transcript (--share)
+                      events.jsonl              # copied session events (structured source)
+                      metrics.json              # parsed metrics
+                      analysis.json             # richer session analysis
+                      workspace.diff            # git diff of the workspace
+                      verify.json               # verification result (if any)
+                      workspace/                # the trial's working directory
 """
 
 from __future__ import annotations
@@ -65,11 +68,21 @@ class Layout:
     def variant_dir(self, experiment_slug: str, run_id: str, variant_slug: str) -> Path:
         return self.run_dir(experiment_slug, run_id) / "variants" / variant_slug
 
+    def task_dir(
+        self, experiment_slug: str, run_id: str, variant_slug: str, task_slug: str
+    ) -> Path:
+        return self.variant_dir(experiment_slug, run_id, variant_slug) / "tasks" / task_slug
+
     def trial_dir(
-        self, experiment_slug: str, run_id: str, variant_slug: str, trial_no: int
+        self,
+        experiment_slug: str,
+        run_id: str,
+        variant_slug: str,
+        task_slug: str,
+        trial_no: int,
     ) -> Path:
         return (
-            self.variant_dir(experiment_slug, run_id, variant_slug)
+            self.task_dir(experiment_slug, run_id, variant_slug, task_slug)
             / "trials"
             / f"{trial_no:03d}"
         )
