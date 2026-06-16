@@ -17,11 +17,13 @@ Layout (inside an experiment repository)::
                   task.json                     # task config (prompt, fixture, verify)
                   trials/
                     <NNN>/
-                      meta.json                 # session id, exit code, duration, success
+                      meta.json                 # session id, exit code, duration, success, status
                       prompt.md                 # exact prompt sent
-                      stdout.jsonl              # copilot --output-format json output
-                      events.jsonl              # copied session events
+                      stdout.txt                # raw copilot stdout/stderr (diagnostics)
+                      session.md                # copilot's markdown transcript (--share)
+                      events.jsonl              # copied session events (structured source)
                       metrics.json              # parsed metrics
+                      analysis.json             # richer session analysis
                       workspace.diff            # git diff of the workspace
                       verify.json               # verification result (if any)
                       workspace/                # the trial's working directory

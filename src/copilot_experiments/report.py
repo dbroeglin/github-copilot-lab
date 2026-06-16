@@ -108,6 +108,8 @@ def build_summary(run: ExperimentRun) -> dict:
     all_trials = [t for vr in run.variants for t in vr.all_trials]
     graded = [t.success for t in all_trials if t.success is not None]
     total_aiu = sum(_vals(all_trials, "aiu")) if all_trials else 0.0
+    n_harness_errors = sum(1 for t in all_trials if t.status == "harness_error")
+    n_copilot_failures = sum(1 for t in all_trials if t.status == "copilot_failed")
     n_tasks = max((len(vr.tasks) for vr in run.variants), default=0)
     return {
         "run_id": run.run_id,
@@ -119,6 +121,9 @@ def build_summary(run: ExperimentRun) -> dict:
         "n_variants": len(run.variants),
         "n_tasks": n_tasks,
         "n_trials": len(all_trials),
+        "n_failed_trials": n_harness_errors + n_copilot_failures,
+        "n_harness_errors": n_harness_errors,
+        "n_copilot_failures": n_copilot_failures,
         "overall_success_rate": (sum(1 for s in graded if s) / len(graded)) if graded else None,
         "total_aiu": round(total_aiu, 3) if total_aiu else None,
         "variants": variant_summaries,
@@ -148,6 +153,7 @@ def summary_markdown(summary: dict, description: str = "") -> str:
         f"# {summary['experiment']}",
         "",
         f"- **Run:** `{summary['run_id']}`",
+        f"- **Status:** {summary.get('status', '-')}",
         f"- **Started:** {summary['started_at']}",
         f"- **Finished:** {summary.get('finished_at') or '-'}",
         f"- **Variants:** {summary['n_variants']} · **Tasks:** {summary.get('n_tasks', 1)} "
@@ -155,6 +161,14 @@ def summary_markdown(summary: dict, description: str = "") -> str:
         f"- **Overall success rate:** {_pct(summary['overall_success_rate'])}",
         f"- **Total cost:** {_aiu(summary.get('total_aiu'))} AIU",
     ]
+    n_failed = summary.get("n_failed_trials") or 0
+    if n_failed:
+        lines.append(
+            f"- **⚠ Harness failures:** {n_failed} trial(s) did not run cleanly "
+            f"({summary.get('n_harness_errors', 0)} harness, "
+            f"{summary.get('n_copilot_failures', 0)} copilot) — see each trial's "
+            "`stdout.txt`."
+        )
     if description:
         lines += ["", description]
     lines += [

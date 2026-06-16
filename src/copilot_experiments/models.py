@@ -14,6 +14,18 @@ Mode = Literal["interactive", "plan", "autopilot"]
 ProviderType = Literal["openai", "azure", "anthropic"]
 WireApi = Literal["completions", "responses"]
 
+# Outcome of a single trial, distinguishing *harness/infra* failures from the
+# experiment's own (verify) result:
+#   * ``ok``             -- Copilot ran to completion (verify pass/fail is separate).
+#   * ``copilot_failed`` -- Copilot was invoked but errored out / produced no session
+#                           log (e.g. authentication failure, bad working dir).
+#   * ``harness_error``  -- the harness pipeline itself raised (provisioning, diffing).
+TrialStatus = Literal["ok", "copilot_failed", "harness_error"]
+
+# Roll-up of a run: every trial ``ok`` -> ``completed``; some but not all failed ->
+# ``partial``; nothing ran successfully -> ``failed``.
+RunStatus = Literal["completed", "partial", "failed"]
+
 # Environment variable names whose *value* should be masked in stored artifacts.
 # A safety net: BYOK secrets belong in ``ProviderConfig`` (already redacted), but a
 # token set via the free-form ``Variant.env`` escape hatch must never be persisted.
@@ -411,6 +423,18 @@ class TrialResult(BaseModel):
     success: bool | None = None
     metrics: Metrics = Field(default_factory=Metrics)
 
+    # Harness/infra outcome (orthogonal to ``success``, which is the experiment's
+    # verify result). ``error`` is a short human-readable message; ``error_artifact``
+    # names the file inside the trial directory to inspect for the full story.
+    status: TrialStatus = "ok"
+    error: str | None = None
+    error_artifact: str | None = None
+
+    @property
+    def failed(self) -> bool:
+        """True when the trial did not run cleanly (harness or copilot failure)."""
+        return self.status != "ok"
+
 
 class TaskResult(BaseModel):
     """All trials of one task within a variant (one cell of the suite × matrix)."""
@@ -427,6 +451,11 @@ class TaskResult(BaseModel):
         if not graded:
             return None
         return sum(1 for s in graded if s) / len(graded)
+
+    @property
+    def n_failed(self) -> int:
+        """Number of trials that did not run cleanly (harness/copilot failures)."""
+        return sum(1 for t in self.trials if t.failed)
 
     @property
     def resolved(self) -> bool | None:
@@ -481,6 +510,26 @@ class ExperimentRun(BaseModel):
     git_base: str | None = None
     status: str = "running"
     variants: list[VariantResult] = Field(default_factory=list)
+
+    @property
+    def all_trials(self) -> list[TrialResult]:
+        return [t for vr in self.variants for t in vr.all_trials]
+
+    @property
+    def n_failed_trials(self) -> int:
+        return sum(1 for t in self.all_trials if t.failed)
+
+    def rollup_status(self) -> RunStatus:
+        """Derive the run status from its trials' harness/copilot outcomes."""
+        trials = self.all_trials
+        if not trials:
+            return "failed"
+        failed = self.n_failed_trials
+        if failed == 0:
+            return "completed"
+        if failed == len(trials):
+            return "failed"
+        return "partial"
 
 
 # --------------------------------------------------------------------------- #

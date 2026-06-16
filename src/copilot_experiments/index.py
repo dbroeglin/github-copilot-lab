@@ -79,9 +79,25 @@ CREATE TABLE IF NOT EXISTS trials (
     files_modified  INTEGER,
     lines_added     INTEGER,
     lines_removed   INTEGER,
-    model           TEXT
+    model           TEXT,
+    status          TEXT,
+    error           TEXT
 );
 """
+
+# Columns added after the initial schema. ``connect`` ALTERs any that a pre-existing
+# index.db is missing (the index is a derived cache, but this avoids a forced reindex).
+_TRIAL_MIGRATIONS = {
+    "status": "ALTER TABLE trials ADD COLUMN status TEXT",
+    "error": "ALTER TABLE trials ADD COLUMN error TEXT",
+}
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(trials)")}
+    for column, ddl in _TRIAL_MIGRATIONS.items():
+        if column not in existing:
+            conn.execute(ddl)
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -89,6 +105,7 @@ def connect(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
 
 
@@ -171,8 +188,9 @@ def index_run_dir(conn: sqlite3.Connection, run_dir: Path) -> None:
                     "input_tokens, output_tokens, total_tokens, cache_read_tokens, "
                     "cache_write_tokens, input_tokens_noncached, reasoning_tokens, aiu, "
                     "api_duration_ms, n_requests, peak_context_tokens, n_compactions, "
-                    "n_truncations, files_modified, lines_added, lines_removed, model) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "n_truncations, files_modified, lines_added, lines_removed, model, "
+                    "status, error) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         run_id,
                         vslug,
@@ -202,6 +220,8 @@ def index_run_dir(conn: sqlite3.Connection, run_dir: Path) -> None:
                         m.get("lines_added"),
                         m.get("lines_removed"),
                         models[-1] if models else v.get("model"),
+                        trial.get("status"),
+                        trial.get("error"),
                     ),
                 )
     conn.commit()
