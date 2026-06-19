@@ -30,3 +30,4 @@ We follow the lightweight format popularized by
 | [0011](0011-token-economics-from-session-shutdown.md) | Token economics from `session.shutdown`, costed in AIU | Accepted |
 | [0012](0012-task-suite-as-experiment-axis.md) | A task suite is an axis of an experiment | Accepted |
 | [0013](0013-auth-preflight-and-trial-diagnostics.md) | Auth preflight, harness-failure status, and richer trial diagnostics | Accepted |
+| [0014](0014-swebench-task-source-and-docker-grading.md) | SWE-bench as a task source with decoupled Docker grading | Accepted |

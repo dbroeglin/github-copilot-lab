@@ -87,6 +87,8 @@ difficulty, with mean-success and resolved@k coverage metrics), see
 | `analyze <run-id>` / `analyze --last` / `analyze --file <events.jsonl>` | Render a rich overview of a session log (timeline, tools, tokens). |
 | `inspect <run-id>` | Drill into a trial's session events and metrics. |
 | `reindex` | Rebuild `results/index.db` from the filesystem. |
+| `swebench-init <dir>` | Materialize a SWE-bench experiment (cache an instance subset + a generated experiment file). |
+| `swebench-eval <run-id>` / `swebench-eval --last` | Grade a finished run's SWE-bench trials with the official Docker harness and re-aggregate. |
 
 ## Documentation
 
@@ -94,6 +96,7 @@ difficulty, with mean-success and resolved@k coverage metrics), see
 - [`docs/authoring-experiments.md`](docs/authoring-experiments.md) — write experiments in Python.
 - [`docs/analysis.md`](docs/analysis.md) — the `analyze` command, the `SessionAnalysis` model, and the web explorer (TBD).
 - [`docs/results-format.md`](docs/results-format.md) — the on-disk layout and SQLite schema.
+- [`docs/swebench.md`](docs/swebench.md) — run the SWE-bench token-consumption protocol (Bai et al.) with Copilot CLI.
 - [`docs/byok-and-local-models.md`](docs/byok-and-local-models.md) — run experiments against BYOK / local models.
 - [`docs/adr/`](docs/adr) — architecture decision records.
 
