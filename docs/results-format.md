@@ -14,12 +14,14 @@ results/
         ├── run.json                           # run manifest (ExperimentRun)
         ├── summary.json                       # aggregated metrics per variant
         ├── summary.md                         # human-readable report
+        ├── swebench/                          # (SWE-bench only) grading I/O, see below
+        │   └── <variant-slug>/trial-<NNN>/predictions.jsonl
         └── variants/
             └── <variant-slug>/
                 ├── variant.json               # variant config (secrets redacted)
                 └── tasks/
                     └── <task-slug>/           # task name slug, or task-001 when unnamed
-                        ├── task.json          # task config (prompt, fixture, verify)
+                        ├── task.json          # task config (prompt, fixture, verify, swebench)
                         └── trials/
                             └── <NNN>/         # zero-padded trial number, e.g. 001
                                 ├── meta.json          # session id, exit code, duration, success, status
@@ -31,6 +33,7 @@ results/
                                 ├── analysis.json      # SessionAnalysis (rich session overview)
                                 ├── workspace.diff      # git diff of Copilot's changes
                                 ├── verify.json        # verification command + exit code + output
+                                ├── swebench.json      # (SWE-bench only) resolved verdict + eval run id
                                 └── workspace/         # the trial's working directory (final state)
 ```
 
@@ -78,6 +81,14 @@ see [`docs/analysis.md`](analysis.md). The AIU math and its rationale are in
 ### `verify.json`
 `{ "command", "exit_code", "success", "output" }`. `success` is `exit_code == 0`. Absent when the
 task has no `verify`.
+
+### `swebench.json` (SWE-bench only)
+`{ "instance_id", "resolved", "eval_run_id" }`, written by `swebench-eval`. `resolved` is the
+ground-truth verdict from the official `swebench` Docker harness (whether `instance_id` is in the
+report's `resolved_ids`); grading also mirrors it into `meta.json`'s `success` so it flows through
+the same resolved@k / mean-success aggregates. The `swebench/<variant>/trial-<NNN>/predictions.jsonl`
+files are the exported `{instance_id, model_name_or_path, model_patch}` inputs to the harness. See
+[`docs/swebench.md`](swebench.md) and [ADR-0014](adr/0014-swebench-task-source-and-docker-grading.md).
 
 ### `analysis.json`
 A serialized `SessionAnalysis` — a richer, rendering-agnostic overview of the same

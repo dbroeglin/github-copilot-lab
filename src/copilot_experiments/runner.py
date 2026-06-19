@@ -187,7 +187,13 @@ def _run_task(
     task_dir.mkdir(parents=True, exist_ok=True)
     write_json(task_dir / "task.json", task.model_dump(mode="json", exclude_none=True))
 
-    tr = TaskResult(task_slug=task_slug, task_name=task.name, prompt=task.prompt)
+    tr = TaskResult(
+        task_slug=task_slug,
+        task_name=task.name,
+        prompt=task.prompt,
+        instance_id=task.swebench.instance_id if task.swebench else None,
+        difficulty=task.swebench.difficulty if task.swebench else None,
+    )
     for trial_no in range(1, variant.trials + 1):
         tr.trials.append(
             _run_trial(

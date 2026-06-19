@@ -26,6 +26,7 @@ Layout (inside an experiment repository)::
                       analysis.json             # richer session analysis
                       workspace.diff            # git diff of the workspace
                       verify.json               # verification result (if any)
+                      swebench.json             # SWE-bench resolution verdict (if graded)
                       workspace/                # the trial's working directory
 """
 

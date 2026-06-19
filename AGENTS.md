@@ -35,13 +35,19 @@ plus a [Typer](https://typer.tiangolo.com/) CLI. It is developed with [`uv`](htt
     `dry_run_experiment()` (ephemeral, validating plumbing check that persists nothing).
   - `storage.py` — the `results/` filesystem `Layout` and run discovery.
   - `index.py` — the SQLite index (`results/index.db`) derived from the filesystem.
-  - `report.py` — aggregation, `summary.json`, and `summary.md`.
+  - `report.py` — aggregation, `summary.json`, and `summary.md` (incl. difficulty-vs-cost).
   - `scaffold.py` — `init` logic: render `templates/experiment_repo/` into a new repo.
-  - `cli.py` — the Typer app (`init`, `run`, `list`, `show`, `analyze`, `inspect`, `reindex`).
+  - `swebench.py` — SWE-bench integration: load instances → `Task`s, export `predictions.jsonl`
+    from captured diffs, and grade resolution with the official `swebench` Docker harness
+    (optional `datasets`/`swebench` deps; pluggable `Evaluator` so tests stay offline). See ADR-0014.
+  - `cli.py` — the Typer app (`init`, `run`, `list`, `show`, `analyze`, `inspect`, `reindex`,
+    `swebench-init`, `swebench-eval`).
   - `templates/experiment_repo/` — package-data template for scaffolded experiment repos.
 - `examples/tracer_bullet/` — a committed, runnable multi-turn example experiment (textstats).
 - `examples/task_suite/` — a committed multi-task example (strtools + csvtools) exercising the
   task axis and its mean-success / resolved@k suite-coverage metrics.
+- `examples/swebench/` — a committed, offline-runnable SWE-bench protocol example (local fixtures
+  carrying SWE-bench metadata) plus a sample `instances.json` and the real-protocol README.
 - `sandbox/` — local scratch space for exercising the lib/CLI (its `results/` are gitignored).
 - `tests/` — pytest suite (uses `MockInvoker`; **never** requires a real `copilot` or network).
 - `docs/` — architecture, authoring guide, analysis (`analyze`), results-format reference,
