@@ -7,9 +7,10 @@ description: Scaffold a new experiment from a short description.
 Create a new GitHub Copilot experiment in this repository.
 
 Given a task description from the user:
-1. Create a deterministic, self-contained fixture under `fixtures/<slug>/`.
-2. Add `experiments/<slug>.py` defining an `Experiment` with a `Task`
-   (prompt + `fixture` + a strict `verify` command) and a small matrix of `Variant`s.
+1. Create a deterministic Harbor/Pier task under `tasks/<slug>/` with `task.toml`,
+   `instruction.md`, `environment/`, and `tests/test.sh`.
+2. Add `experiments/<slug>.yaml` defining a Pier `JobConfig` with the `copilot-cli` agent, model
+   settings, attempts, and artifacts.
 3. Validate with `copilot-experiments run --dry-run` and fix any errors.
 
-Ask for the model matrix and number of trials if not provided.
+Ask for the model matrix and number of attempts if not provided.

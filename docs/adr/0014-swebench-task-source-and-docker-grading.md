@@ -1,8 +1,12 @@
 # 0014. SWE-bench as a task source with decoupled Docker grading
 
-- **Status:** Accepted
+- **Status:** Narrowed by [ADR-0015](0015-adopt-pier-for-sandboxed-agent-evals.md)
 - **Date:** 2026-06-18
 - **Deciders:** project owner, Copilot
+
+> **Amendment (ADR-0015):** SWE-bench support should now materialize Pier task directories and
+> use Pier verifier/artifact flows where possible. The host-side Python task source is legacy
+> migration scaffolding.
 
 ## Context
 

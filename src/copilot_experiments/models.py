@@ -36,9 +36,7 @@ _SECRET_ENV_HINT = re.compile(
 
 def _redact_env(env: dict[str, str]) -> dict[str, str]:
     """Mask values of environment variables whose name hints at a secret."""
-    return {
-        k: ("***redacted***" if _SECRET_ENV_HINT.search(k) else v) for k, v in env.items()
-    }
+    return {k: ("***redacted***" if _SECRET_ENV_HINT.search(k) else v) for k, v in env.items()}
 
 
 # --------------------------------------------------------------------------- #

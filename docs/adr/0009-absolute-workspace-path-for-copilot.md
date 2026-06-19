@@ -1,8 +1,11 @@
 # 0009. Copilot is always invoked with an absolute workspace path
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0015](0015-adopt-pier-for-sandboxed-agent-evals.md) for Pier runs
 - **Date:** 2026-06-15
 - **Deciders:** project owner, Copilot
+
+> **Amendment (ADR-0015):** Pier owns sandbox working directories for new runs. The Copilot Pier
+> agent still passes explicit session/log paths, but the old host-side `-C` invariant is legacy.
 
 ## Context
 

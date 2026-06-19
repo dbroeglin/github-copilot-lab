@@ -1,8 +1,11 @@
 # 0012. A task suite is an axis of an experiment
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0015](0015-adopt-pier-for-sandboxed-agent-evals.md)
 - **Date:** 2026-06-16
 - **Deciders:** project owner, Copilot
+
+> **Amendment (ADR-0015):** Pier's `agents x tasks x n_attempts` job model is now the primary
+> matrix. The Python `Experiment = Tasks x Variants x Trials` model remains a legacy bridge.
 
 ## Context
 

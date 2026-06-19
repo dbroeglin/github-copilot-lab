@@ -35,9 +35,7 @@ def init_experiment_repo(
         raise ScaffoldError(f"Template directory missing: {TEMPLATE_DIR}")
 
     if dest.exists() and any(dest.iterdir()) and not force:
-        raise ScaffoldError(
-            f"Destination '{dest}' is not empty. Use --force to scaffold anyway."
-        )
+        raise ScaffoldError(f"Destination '{dest}' is not empty. Use --force to scaffold anyway.")
 
     project_name = project_name or slugify(dest.resolve().name)
     replacements = {

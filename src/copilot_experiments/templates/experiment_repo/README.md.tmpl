@@ -6,9 +6,10 @@ GitHub Copilot research experiments, powered by
 ## Layout
 
 ```
-experiments/        # Python experiment definitions (one or more per file)
-fixtures/           # starting workspaces copied for each trial
-results/            # collected run artifacts + SQLite index (gitignored)
+experiments/        # Pier JobConfig YAML files
+tasks/              # Harbor/Pier task directories
+jobs/               # Pier job outputs (gitignored)
+results/            # derived SQLite index for queries (gitignored)
 .apm/               # APM agent context (instructions, skills, prompts)
 ```
 
@@ -17,31 +18,28 @@ results/            # collected run artifacts + SQLite index (gitignored)
 ```bash
 uv sync
 
-uv sync
-
-# validate the whole pipeline without spending credits (mock Copilot; persists nothing)
+# validate Pier job configs without starting Docker or spending credits
 uv run copilot-experiments run --dry-run
 
-# run for real (preflights GitHub auth: COPILOT_GITHUB_TOKEN/GH_TOKEN/GITHUB_TOKEN or `gh auth login`)
+# run for real through Pier (requires Copilot auth and a supported Pier backend)
 uv run copilot-experiments run
 uv run copilot-experiments show --last
 
 # explore results
 uv run copilot-experiments list
-uv run copilot-experiments inspect <run-id> --variant <slug> --trial 1
+uv run copilot-experiments inspect <job-name> --trial 1
+uv run copilot-experiments analyze <job-name> --trial 1
 ```
-
-> `--dry-run` runs the whole pipeline with a mock Copilot inside a temp dir, checks each stage
-> produced its artifact (workspace, log, metrics, analysis, a non-empty diff, verify, summary,
-> index), then deletes everything — it persists nothing and uses no credits. The mock does
-> **not** solve the task, so it validates plumbing, not effectiveness; run without `--dry-run`
-> to capture real data to `show`, `analyze`, or `inspect`.
 
 ## Writing experiments
 
-See `experiments/example_fix_bug.py`. An experiment is an `Experiment` object combining a
-`Task` (prompt + workspace fixture + optional `verify` command) with a list of `Variant`s
-(the parameter matrix: model, reasoning effort, agent, or BYOK provider).
+See `tasks/example-fix-bug/` and `experiments/example.yaml`.
+
+Tasks are Harbor/Pier task directories (`instruction.md`, `task.toml`, `environment/`,
+`tests/`). Experiments are Pier `JobConfig` YAML files that choose tasks, agents, models,
+attempts, concurrency, and artifacts. The bundled `copilot-cli` agent runs the real GitHub
+Copilot CLI inside the Pier environment and captures both ATIF and native Copilot
+`events.jsonl` logs.
 
 ## Agent context (APM)
 

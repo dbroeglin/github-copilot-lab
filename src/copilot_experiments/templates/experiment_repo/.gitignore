@@ -1,5 +1,6 @@
 # Generated / regenerable
 results/
+jobs/
 __pycache__/
 *.py[cod]
 .venv/

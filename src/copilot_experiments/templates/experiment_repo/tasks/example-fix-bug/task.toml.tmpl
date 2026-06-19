@@ -1,0 +1,26 @@
+version = "1.0"
+
+[task]
+name = "{{project_name}}/example-fix-bug"
+description = "Fix a small Python bug so the verifier passes."
+authors = []
+keywords = ["copilot", "python", "bugfix"]
+
+[metadata]
+difficulty = "easy"
+category = "programming"
+
+[agent]
+timeout_sec = 600.0
+
+[verifier]
+timeout_sec = 120.0
+
+[environment]
+build_timeout_sec = 600.0
+cpus = 1
+memory_mb = 2048
+storage_mb = 10240
+gpus = 0
+allow_internet = true
+workdir = "/app"

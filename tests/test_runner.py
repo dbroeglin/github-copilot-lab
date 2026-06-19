@@ -206,9 +206,7 @@ def test_copilot_nonzero_exit_is_a_harness_failure(repo_root: Path, experiment: 
 
     # The status is durable on disk.
     layout = Layout(repo_root)
-    meta_path = (
-        layout.trial_dir(experiment.slug, run.run_id, "alpha", "task-001", 1) / "meta.json"
-    )
+    meta_path = layout.trial_dir(experiment.slug, run.run_id, "alpha", "task-001", 1) / "meta.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     assert meta["status"] == "copilot_failed"
 
@@ -236,19 +234,31 @@ def test_partial_run_when_some_variants_fail(repo_root: Path):
     # One variant errors in the harness while the others run cleanly -> ``partial``.
     failing = Variant(name="alpha")
     failing_solver_run = ExperimentRun(
-        run_id="r", experiment_slug="s", experiment_name="n", started_at="t",
+        run_id="r",
+        experiment_slug="s",
+        experiment_name="n",
+        started_at="t",
         variants=[
-            VariantResult(variant=failing, tasks=[
-                TaskResult(task_slug="task-001", trials=[
-                    TrialResult(
-                        trial_no=1, session_id="a", exit_code=0, duration_s=1.0, status="ok"
+            VariantResult(
+                variant=failing,
+                tasks=[
+                    TaskResult(
+                        task_slug="task-001",
+                        trials=[
+                            TrialResult(
+                                trial_no=1, session_id="a", exit_code=0, duration_s=1.0, status="ok"
+                            ),
+                            TrialResult(
+                                trial_no=2,
+                                session_id="b",
+                                exit_code=1,
+                                duration_s=1.0,
+                                status="copilot_failed",
+                            ),
+                        ],
                     ),
-                    TrialResult(
-                        trial_no=2, session_id="b", exit_code=1, duration_s=1.0,
-                        status="copilot_failed",
-                    ),
-                ]),
-            ]),
+                ],
+            ),
         ],
     )
     assert failing_solver_run.rollup_status() == "partial"

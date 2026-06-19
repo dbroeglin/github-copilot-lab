@@ -311,8 +311,7 @@ def summary_markdown(summary: dict, description: str = "") -> str:
             "",
             "## Difficulty vs cost",
             "",
-            "| Difficulty | Instances | Cells | Mean success | Resolved@k | Avg AIU "
-            "| Avg tokens |",
+            "| Difficulty | Instances | Cells | Mean success | Resolved@k | Avg AIU | Avg tokens |",
             "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
         for d in difficulty_rows:

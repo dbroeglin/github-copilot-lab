@@ -36,10 +36,15 @@ run_experiment() → results/<exp>/<run-id>/ + results/index.db
   path, and `dry_run_experiment(exp, root=tmp)` to exercise the ephemeral validating dry-run
   (returns a `DryRunReport`, persists nothing).
 - Build synthetic `events.jsonl` dicts to test `parse_metrics` without any Copilot run.
+- Add or update focused offline tests for each behavior change. Good coverage is expected,
+  especially around Pier config loading, result adaptation, CLI behavior, and session parsing.
 
 ## Verify before done
 ```bash
-uv run ruff check . && uv run pytest -q
+uv run ruff check --fix .
+uv run ruff format .
+uv run ruff check .
+uv run pytest -q
 # optional end-to-end smoke test:
 uv run copilot-experiments init sandbox/demo --force
 uv run copilot-experiments run --root sandbox/demo --dry-run

@@ -1,6 +1,6 @@
 # 0002. The filesystem is the source of truth
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0015](0015-adopt-pier-for-sandboxed-agent-evals.md)
 - **Date:** 2026-06-14
 
 ## Context
@@ -16,6 +16,10 @@ We will treat the **`results/` directory tree as the canonical store**. Every ru
 self-describing folder (`results/<experiment>/<run-id>/…`) containing all of its artifacts as
 plain files (JSON, JSONL, Markdown, diffs). Any index or database is derived from this tree
 and can be rebuilt from it at any time.
+
+> **Amendment (ADR-0015):** for Pier-native runs, the canonical filesystem tree is
+> `jobs/<job>/`. The principle remains unchanged: durable plain files are source of truth and
+> SQLite is derived.
 
 ## Consequences
 

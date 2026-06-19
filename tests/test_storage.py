@@ -46,3 +46,20 @@ def test_iter_runs_skips_incomplete(tmp_path: Path):
     layout = Layout(tmp_path)
     ids = [rid for _, rid, _ in layout.iter_runs()]
     assert ids == ["good"]
+
+
+def test_pier_job_helpers(tmp_path: Path):
+    jobs = tmp_path / "jobs"
+    good = jobs / "20260102T000000Z_beta"
+    good.mkdir(parents=True)
+    (good / "config.json").write_text("{}", encoding="utf-8")
+    (good / "result.json").write_text("{}", encoding="utf-8")
+    incomplete = jobs / "20260103T000000Z_incomplete"
+    incomplete.mkdir()
+
+    layout = Layout(tmp_path)
+
+    assert layout.iter_pier_jobs() == [good]
+    assert layout.latest_pier_job() == good
+    assert layout.find_pier_job("20260102") == good
+    assert layout.find_pier_job("missing") is None

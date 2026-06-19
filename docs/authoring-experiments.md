@@ -1,122 +1,135 @@
 # Authoring experiments
 
-Experiments are **Python objects**, discovered from the `experiments/` directory of an
-experiment repository (the kind created by `copilot-experiments init`). Each module exposes one
-or more experiments via any of:
+New experiments are Pier jobs over Harbor/Pier task directories.
 
-- a module-level variable `experiment` (a single `Experiment`), or
-- a module-level list `experiments` (multiple `Experiment`s), or
-- a function `get_experiments()` returning a list.
+## Repository layout
 
-## The building blocks
-
-```python
-from copilot_experiments import Experiment, Task, Variant
+```
+experiments/
+  my-job.yaml
+tasks/
+  fix-calculator/
+    task.toml
+    instruction.md
+    environment/
+      Dockerfile
+      calculator.py
+    tests/
+      test.sh
+      test_calculator.py
+jobs/       # Pier outputs, gitignored
+results/    # derived SQLite index, gitignored
 ```
 
-### `Task` — what Copilot is asked to do
+## Task directory
+
+`task.toml` describes metadata and resource limits:
+
+```toml
+version = "1.0"
+
+[task]
+name = "examples/fix-calculator"
+description = "Fix a small Python bug."
+authors = [{ name = "example" }]
+keywords = ["copilot", "python"]
+
+[metadata]
+difficulty = "easy"
+
+[agent]
+timeout_sec = 600.0
+
+[verifier]
+timeout_sec = 120.0
+
+[environment]
+build_timeout_sec = 600.0
+cpus = 1
+memory_mb = 2048
+storage_mb = 10240
+gpus = 0
+allow_internet = true
+workdir = "/app"
+```
+
+`instruction.md` is the prompt handed to the agent. Keep hidden verifier details out of it when
+benchmarking.
+
+`environment/Dockerfile` builds the starting workspace. A minimal Python task usually copies the
+buggy source into `/app`.
+
+`tests/test.sh` is the Pier verifier. It should write a reward and exit non-zero on failure:
+
+```bash
+#!/usr/bin/env bash
+set +e
+
+python -m pip install --quiet pytest==8.4.1
+python -m pytest -q /tests/test_calculator.py
+status=$?
+
+if [ "$status" -eq 0 ]; then
+  echo 1 > /logs/verifier/reward.txt
+else
+  echo 0 > /logs/verifier/reward.txt
+fi
+
+exit "$status"
+```
+
+## Job config
+
+`experiments/my-job.yaml` is a Pier `JobConfig`:
+
+```yaml
+job_name: fix-calculator
+jobs_dir: jobs
+n_attempts: 3
+n_concurrent_trials: 2
+
+agents:
+  - name: copilot-cli
+    model_name: gpt-5-mini
+    kwargs:
+      reasoning_effort: low
+
+tasks:
+  - path: ../tasks/fix-calculator
+
+artifacts:
+  - source: /app/calculator.py
+    destination: calculator.py
+```
+
+Useful knobs:
 
 | Field | Meaning |
 | --- | --- |
-| `name` | Optional human label; slugified for the results directory (`tasks/<slug>/`). Unnamed tasks become `task-001`, `task-002`, …. |
-| `prompt` | The instruction handed to `copilot -p`. |
-| `fixture` | Path (relative to the repo) to a directory copied fresh as the starting workspace for every trial. |
-| `repo` / `ref` | Alternative to `fixture`: `git clone` a repository and optionally check out a branch/tag/commit. |
-| `setup` | Shell commands run in the workspace *after* provisioning, *before* Copilot (e.g. install deps). |
-| `verify` | Shell command run *after* Copilot. **Exit code 0 means the trial succeeded.** Omit to skip effectiveness grading. |
-
-Provide either `fixture` **or** `repo` (not both). Keep fixtures deterministic and
-self-contained so trials are comparable.
-
-### `Variant` — one cell of the parameter matrix
-
-| Field | Meaning |
-| --- | --- |
-| `name` | Human label; slugified for the results directory. |
-| `model` | e.g. `claude-opus-4.7`, `gpt-5.2`, or a BYOK model id. |
-| `reasoning_effort` | `none` / `low` / `medium` / `high` / `xhigh` / `max`. |
-| `agent`, `mode` | Optional Copilot agent and mode (`interactive` / `plan` / `autopilot`). |
-| `allow_all_tools` | Defaults to `True` (non-interactive runs need tools). |
-| `allow_tools` / `deny_tools` | Fine-grained tool gating. |
-| `provider` | A `ProviderConfig` for BYOK / local models (see [BYOK guide](byok-and-local-models.md)). |
-| `env` | Extra environment variables for this variant. |
-| `extra_args` | Raw extra `copilot` CLI arguments. |
-| `trials` | Number of repetitions (for statistical robustness). |
-
-### `Experiment`
-
-An experiment is `Tasks × Variants × Trials`. Use the singular `task=` for a single-task
-experiment, or `tasks=[...]` to run a **suite** of tasks through the same variant matrix
-(exactly one of the two is required).
-
-```python
-experiment = Experiment(
-    name="Fix the calculator bug",
-    description="Copilot must repair a deliberately broken multiply().",
-    task=Task(
-        prompt="The tests in test_calculator.py fail. Fix calculator.py so they pass.",
-        fixture="fixtures/buggy_calculator",
-        verify="python -m pytest -q",
-    ),
-    variants=[
-        Variant(name="opus-medium", model="claude-opus-4.7", reasoning_effort="medium", trials=3),
-        Variant(name="gpt-5", model="gpt-5.2", trials=3),
-    ],
-)
-```
-
-A task suite — name each task so it gets a stable `tasks/<slug>/` directory:
-
-```python
-suite = Experiment(
-    name="Calculator fixes",
-    description="Several independent bugs, run through the same matrix.",
-    tasks=[
-        Task(name="Fix multiply", prompt="...", fixture="fixtures/buggy_multiply",
-             verify="python -m pytest -q"),
-        Task(name="Fix divide", prompt="...", fixture="fixtures/buggy_divide",
-             verify="python -m pytest -q"),
-    ],
-    variants=[Variant(name="opus-medium", model="claude-opus-4.7", trials=3)],
-)
-```
-
-The report adds two suite-coverage measures per variant: **mean-success** (mean of each task's
-trial success rate) and **resolved@k** (the fraction of tasks where *any* trial passed). This is
-option B of [ADR-0012](adr/0012-task-suite-as-experiment-axis.md); the sequential runner is best
-for handfuls of tasks, not thousands of benchmark instances.
+| `agents[]` | Pier agents to run. `name: copilot-cli` maps to this package's local installed agent. Other Pier agents can be used for success/reward capture even without Copilot-native metrics. |
+| `model_name` | Model passed to the agent. For Copilot CLI this becomes `--model`. |
+| `kwargs.reasoning_effort` | Copilot `--effort`. |
+| `kwargs.mode` | Copilot `--mode` (`plan`, `interactive`, `autopilot`). |
+| `kwargs.context_tier` | Copilot `--context-tier`. |
+| `kwargs.extra_args` | Raw extra Copilot CLI arguments. |
+| `n_attempts` | Repetitions per agent/task cell. |
+| `n_concurrent_trials` | Pier concurrency. |
+| `artifacts` | Files or directories copied out of the environment after trials. |
 
 ## Workflow
 
 ```bash
-# 1. Add a deterministic fixture workspace.
-mkdir -p fixtures/my_fixture   # put broken code + a test that fails
-
-# 2. Write experiments/my_experiment.py defining `experiment` (as above).
-
-# 3. Validate the whole pipeline without spending credits (persists nothing):
 uv run copilot-experiments run --dry-run
-
-# 4. Run for real. The harness preflights GitHub auth first: it uses
-#    COPILOT_GITHUB_TOKEN / GH_TOKEN / GITHUB_TOKEN, or falls back to `gh auth token`,
-#    and aborts with guidance if none is found. (BYOK provider secrets still come from env.)
 uv run copilot-experiments run
-
-# 5. Inspect the produced run:
 uv run copilot-experiments show --last
-uv run copilot-experiments inspect --last --variant opus-medium --trial 1
+uv run copilot-experiments analyze --last --trial 1
 ```
 
-> **`--dry-run` validates the plumbing, then throws everything away.** It runs the whole
-> pipeline with a mock Copilot inside a temp dir and checks each stage produced its artifact
-> (workspace + git baseline, session log, metrics, analysis, a **non-empty diff**, verify, run
-> summary, index), printing a pass/fail checklist. It does *not* prove task-solving — the mock
-> does not solve the task — and it persists nothing under `results/`; use a real `run` to
-> capture data to `show`, `analyze`, or `inspect`.
+`--dry-run` validates Pier configs and path normalization without starting a sandbox. The legacy
+Python experiment path still has an ephemeral mock dry-run, but Pier is the primary authoring
+model.
 
-## Tips
+## Legacy Python experiments
 
-- Make `verify` strict and fast (a focused test command) so success is unambiguous.
-- Vary **one axis at a time** across variants when you want to attribute differences.
-- Use `trials > 1` to smooth out run-to-run variance before comparing models.
-- Never edit `results/` by hand; it is regenerable via `copilot-experiments reindex`.
+The old `Experiment`, `Task`, and `Variant` API remains temporarily for migration and tests. It is
+used only when no Pier configs are found in `experiments/`. Do not use it for new experiment repos.

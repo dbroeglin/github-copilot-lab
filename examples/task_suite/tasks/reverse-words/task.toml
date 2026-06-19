@@ -1,0 +1,26 @@
+version = "1.0"
+
+[task]
+name = "examples/reverse-words"
+description = "Implement one string helper so the verifier passes."
+authors = [{ name = "copilot-experiments" }]
+keywords = ["copilot", "python", "strings"]
+
+[metadata]
+difficulty = "easy"
+category = "programming"
+
+[agent]
+timeout_sec = 600.0
+
+[verifier]
+timeout_sec = 120.0
+
+[environment]
+build_timeout_sec = 600.0
+cpus = 1
+memory_mb = 2048
+storage_mb = 10240
+gpus = 0
+allow_internet = true
+workdir = "/app"

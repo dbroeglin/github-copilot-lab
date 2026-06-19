@@ -76,8 +76,9 @@ def _header_panel(a: SessionAnalysis, title: str | None) -> Panel:
     row("started", a.started_at)
     row("duration", _dur(a.duration_s))
     heading = title or "Session analysis"
-    return Panel(grid, title=f"[bold]{heading}[/bold]", border_style="cyan", expand=False,
-                 padding=(0, 1))
+    return Panel(
+        grid, title=f"[bold]{heading}[/bold]", border_style="cyan", expand=False, padding=(0, 1)
+    )
 
 
 def _totals_table(a: SessionAnalysis) -> Table:
@@ -268,8 +269,9 @@ def render_session_analysis(
     console.print(_timeline_table(analysis, max_turns=max_turns))
     if analysis.warnings:
         body = "\n".join(f"\u2022 {w}" for w in analysis.warnings)
-        console.print(Panel(body, title="[bold]Warnings[/bold]", border_style="yellow",
-                            expand=False))
+        console.print(
+            Panel(body, title="[bold]Warnings[/bold]", border_style="yellow", expand=False)
+        )
 
 
 # --------------------------------------------------------------------------- #

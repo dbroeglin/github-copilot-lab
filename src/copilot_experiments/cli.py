@@ -17,6 +17,8 @@ from .auth import AuthError, preflight_github_token
 from .index import list_runs as index_list_runs
 from .index import reindex as index_reindex
 from .models import DryRunReport, Experiment, ExperimentRun
+from .pier_backend import discover_pier_job_configs, inject_copilot_token, run_pier_job
+from .pier_results import resolve_pier_trial_events, write_pier_summary
 from .render import render_session_analysis
 from .runner import dry_run_experiment, run_experiment
 from .scaffold import ScaffoldError, init_experiment_repo
@@ -26,8 +28,10 @@ from .swebench import (
     DEFAULT_DATASET,
     DEFAULT_SPLIT,
     SweBenchError,
+    grade_pier_job,
     grade_run,
     load_instances,
+    materialize_pier_swebench,
 )
 
 
@@ -162,6 +166,52 @@ def run(
     """
     root = Path(root or Path.cwd())
     layout = Layout(root)
+    pier_specs = discover_pier_job_configs(root, name=name)
+    if pier_specs:
+        if dry_run:
+            table = Table(title="Pier job configs", show_edge=False)
+            table.add_column("job")
+            table.add_column("config")
+            table.add_column("tasks", justify="right")
+            table.add_column("agents", justify="right")
+            for spec in pier_specs:
+                table.add_row(
+                    spec.name,
+                    str(spec.path.relative_to(root)),
+                    str(len(spec.config.tasks) + len(spec.config.datasets)),
+                    str(len(spec.config.agents)),
+                )
+            console.print(table)
+            console.print("[green]Pier config validation OK[/green] [dim]— no job was run[/dim]")
+            raise typer.Exit(0)
+
+        try:
+            auth = preflight_github_token()
+        except AuthError as exc:
+            err.print(f"[red]Authentication error:[/red] {exc}")
+            raise typer.Exit(1) from exc
+        console.print(f"[dim]auth:[/dim] using GitHub token from {auth.source}")
+
+        any_failures = False
+        for spec in pier_specs:
+            inject_copilot_token(spec.config, auth.token)
+            console.print(f"[bold]Running Pier job[/bold] {spec.name}")
+            try:
+                run_result = run_pier_job(spec.config)
+            except Exception as exc:
+                err.print(f"[red]Pier job failed:[/red] {type(exc).__name__}: {exc}")
+                any_failures = True
+                continue
+            summary = write_pier_summary(run_result.job_dir)
+            _print_run_summary(summary)
+            if summary.get("status") != "completed":
+                any_failures = True
+            console.print(f"[dim]results:[/dim] {run_result.job_dir}\n")
+
+        if any_failures:
+            raise typer.Exit(2)
+        raise typer.Exit(0)
+
     experiments = _load_experiments(layout.experiments_dir)
     if not experiments:
         err.print(f"[yellow]No experiments found in[/yellow] {layout.experiments_dir}")
@@ -197,8 +247,9 @@ def run(
 
     any_failures = False
     for _path, experiment in experiments:
-        console.print(f"[bold]Running[/bold] {experiment.name} "
-                      f"({len(experiment.variants)} variant(s))")
+        console.print(
+            f"[bold]Running[/bold] {experiment.name} ({len(experiment.variants)} variant(s))"
+        )
         progress = _make_progress() if verbose else None
         copilot_stream = _make_copilot_stream() if verbose else None
         run_obj = run_experiment(
@@ -229,6 +280,22 @@ def list_cmd(
     """List experiments and past runs."""
     root = Path(root or Path.cwd())
     layout = Layout(root)
+    pier_specs = discover_pier_job_configs(root)
+    if pier_specs:
+        table = Table(title="Pier job configs", show_edge=False)
+        table.add_column("job")
+        table.add_column("config")
+        table.add_column("tasks", justify="right")
+        table.add_column("agents", justify="right")
+        for spec in pier_specs:
+            table.add_row(
+                spec.name,
+                str(spec.path.relative_to(root)),
+                str(len(spec.config.tasks) + len(spec.config.datasets)),
+                str(len(spec.config.agents)),
+            )
+        console.print(table)
+
     experiments = _load_experiments(layout.experiments_dir)
     if experiments:
         table = Table(title="Experiments", show_edge=False)
@@ -242,21 +309,39 @@ def list_cmd(
     runs = index_list_runs(layout)
     if not runs:
         console.print("[dim]No runs yet.[/dim]")
+    else:
+        table = Table(title="Runs")
+        table.add_column("run id")
+        table.add_column("experiment")
+        table.add_column("started")
+        table.add_column("trials", justify="right")
+        table.add_column("success", justify="right")
+        for r in runs:
+            sr = r.get("success_rate")
+            table.add_row(
+                r["run_id"],
+                r["experiment_slug"],
+                (r.get("started_at") or "")[:19],
+                str(r.get("n_trials") or 0),
+                "-" if sr is None else f"{sr * 100:.0f}%",
+            )
+        console.print(table)
+
+    pier_jobs = layout.iter_pier_jobs()
+    if not pier_jobs:
         return
     table = Table(title="Runs")
-    table.add_column("run id")
-    table.add_column("experiment")
+    table.add_column("pier job")
     table.add_column("started")
     table.add_column("trials", justify="right")
-    table.add_column("success", justify="right")
-    for r in runs:
-        sr = r.get("success_rate")
+    table.add_column("status")
+    for job_dir in pier_jobs:
+        summary = write_pier_summary(job_dir)
         table.add_row(
-            r["run_id"],
-            r["experiment_slug"],
-            (r.get("started_at") or "")[:19],
-            str(r.get("n_trials") or 0),
-            "-" if sr is None else f"{sr * 100:.0f}%",
+            job_dir.name,
+            (summary.get("started_at") or "")[:19],
+            str(summary.get("n_trials") or 0),
+            str(summary.get("status") or "-"),
         )
     console.print(table)
 
@@ -270,7 +355,18 @@ def show(
     """Print a run summary and per-variant comparison."""
     root = Path(root or Path.cwd())
     layout = Layout(root)
-    run_dir = layout.latest_run() if last else (layout.find_run(run_id) if run_id else None)
+    pier_job = _resolve_pier_job(layout, last=last, run_id=run_id)
+    run_dir = (
+        None
+        if last and pier_job is not None
+        else (layout.latest_run() if last else (layout.find_run(run_id) if run_id else None))
+    )
+    if run_dir is None:
+        if pier_job is not None:
+            summary = write_pier_summary(pier_job)
+            _print_run_summary(summary)
+            console.print(f"\n[dim]{pier_job / 'summary.md'}[/dim]")
+            return
     if run_dir is None:
         err.print("[red]Run not found.[/red] Pass a run id or --last.")
         raise typer.Exit(1)
@@ -291,7 +387,16 @@ def inspect(
     """Drill into a run's variants, tasks, trials, and session events."""
     root = Path(root or Path.cwd())
     layout = Layout(root)
-    run_dir = layout.latest_run() if last else (layout.find_run(run_id) if run_id else None)
+    pier_job = _resolve_pier_job(layout, last=last, run_id=run_id)
+    run_dir = (
+        None
+        if last and pier_job is not None
+        else (layout.latest_run() if last else (layout.find_run(run_id) if run_id else None))
+    )
+    if run_dir is None:
+        if pier_job is not None:
+            _inspect_pier_job(pier_job)
+            return
     if run_dir is None:
         err.print("[red]Run not found.[/red] Pass a run id or --last.")
         raise typer.Exit(1)
@@ -386,13 +491,29 @@ def analyze(
         if not events:
             err.print(f"[red]No events found in[/red] {file}")
             raise typer.Exit(1)
-        render_session_analysis(analyze_events(events), console, title=file.name,
-                                max_turns=max_turns)
+        render_session_analysis(
+            analyze_events(events), console, title=file.name, max_turns=max_turns
+        )
         return
 
     root = Path(root or Path.cwd())
     layout = Layout(root)
-    run_dir = layout.latest_run() if last else (layout.find_run(run_id) if run_id else None)
+    pier_job = _resolve_pier_job(layout, last=last, run_id=run_id)
+    run_dir = (
+        None
+        if last and pier_job is not None
+        else (layout.latest_run() if last else (layout.find_run(run_id) if run_id else None))
+    )
+    if run_dir is None:
+        if pier_job is not None:
+            events_path, label = resolve_pier_trial_events(pier_job, trial)
+            if events_path is None:
+                err.print(f"[red]No Copilot session log found in[/red] {pier_job}")
+                raise typer.Exit(1)
+            render_session_analysis(
+                analyze_events(load_events(events_path)), console, title=label, max_turns=max_turns
+            )
+            return
     if run_dir is None:
         err.print("[red]Run not found.[/red] Pass a run id, --last, or --file.")
         raise typer.Exit(1)
@@ -416,42 +537,6 @@ def reindex(
     layout = Layout(root)
     count = index_reindex(layout)
     console.print(f"[green]Reindexed {count} run(s)[/green] -> {layout.index_db}")
-
-
-# --------------------------------------------------------------------------- #
-# SWE-bench
-# --------------------------------------------------------------------------- #
-def _swebench_experiment_module(
-    *, name: str, description: str, models: list[str], effort: str | None, trials: int
-) -> str:
-    """Render the generated ``experiments/swebench_experiment.py`` source."""
-    effort_literal = repr(effort) if effort else "None"
-    variant_lines = "\n".join(
-        f'        Variant(name={m!r}, model={m!r}, '
-        f"reasoning_effort={effort_literal}, trials={trials}),"
-        for m in models
-    )
-    return (
-        '"""SWE-bench token-consumption experiment.\n\n'
-        "Generated by `copilot-experiments swebench-init`. Reproduces the protocol of\n"
-        'Bai et al. ("How Do Coding Agents Spend Your Money?") with Copilot CLI as the\n'
-        "agent: each SWE-bench instance is one task, repeated `trials` times (the paper's\n"
-        '"runs"). Grade resolution with `copilot-experiments swebench-eval` (needs Docker\n'
-        "and the `swebench` package).\n"
-        '"""\n\n'
-        "from pathlib import Path\n\n"
-        "from copilot_experiments import Experiment, Variant\n"
-        "from copilot_experiments.swebench import load_tasks\n\n"
-        '_INSTANCES = Path(__file__).resolve().parent.parent / "swebench" / "instances.json"\n\n'
-        "experiment = Experiment(\n"
-        f"    name={name!r},\n"
-        f"    description={description!r},\n"
-        "    tasks=load_tasks(instances_file=_INSTANCES),\n"
-        "    variants=[\n"
-        f"{variant_lines}\n"
-        "    ],\n"
-        ")\n"
-    )
 
 
 @app.command(name="swebench-init")
@@ -482,13 +567,7 @@ def swebench_init(
         False, "--force", help="Overwrite an existing generated experiment."
     ),
 ) -> None:
-    """Materialize a SWE-bench experiment: cache a subset of instances + an experiment file.
-
-    Downloads (or reads ``--instances-file``) a config-driven subset of SWE-bench,
-    writes it to ``<root>/swebench/instances.json`` for offline-reproducible runs, and
-    generates ``<root>/experiments/swebench_experiment.py``. Run it with
-    ``copilot-experiments run`` then grade with ``copilot-experiments swebench-eval``.
-    """
+    """Materialize a SWE-bench subset as Pier tasks plus a Pier job config."""
     root = Path(directory or Path.cwd())
     models = model or ["claude-sonnet-4.5"]
     effective_limit = limit if limit and limit > 0 else None
@@ -507,34 +586,29 @@ def swebench_init(
         err.print("[red]No instances selected.[/red]")
         raise typer.Exit(1)
 
-    instances_path = root / "swebench" / "instances.json"
-    from ._util import write_json as _write_json
-    from ._util import write_text as _write_text
-
-    exp_path = root / "experiments" / "swebench_experiment.py"
-    if exp_path.exists() and not force:
-        err.print(f"[red]error:[/red] {exp_path} already exists (use --force to overwrite).")
-        raise typer.Exit(1)
-
-    _write_json(instances_path, records)
-    description = (
-        f"SWE-bench ({dataset}) — {len(records)} instance(s) × {trials} trial(s) per variant; "
-        "Copilot CLI as the agent, graded with the official swebench Docker harness."
-    )
-    _write_text(
-        exp_path,
-        _swebench_experiment_module(
-            name=name, description=description, models=models, effort=effort, trials=trials
-        ),
-    )
+    try:
+        materialized = materialize_pier_swebench(
+            root,
+            records,
+            name=name,
+            dataset=dataset,
+            models=models,
+            effort=effort,
+            trials=trials,
+            force=force,
+        )
+    except SweBenchError as exc:
+        err.print(f"[red]error:[/red] {exc}")
+        raise typer.Exit(1) from exc
 
     console.print(
-        f"[green]Wrote {len(records)} instance(s)[/green] -> {instances_path}\n"
-        f"[green]Generated experiment[/green] -> {exp_path}"
+        f"[green]Wrote {len(records)} instance(s)[/green] -> {materialized.instances_path}\n"
+        f"[green]Generated {len(materialized.task_dirs)} Pier task(s)[/green] -> {root / 'tasks'}\n"
+        f"[green]Generated Pier job[/green] -> {materialized.job_path}"
     )
     console.print("\nNext steps:")
+    console.print(f"  uv run copilot-experiments run --root {root} --dry-run")
     console.print(f"  uv run copilot-experiments run --root {root}")
-    console.print(f"  uv run copilot-experiments swebench-eval --root {root} --last")
 
 
 @app.command(name="swebench-eval")
@@ -561,10 +635,38 @@ def swebench_eval(
     """
     root = Path(root or Path.cwd())
     layout = Layout(root)
-    run_dir = layout.latest_run() if last else (layout.find_run(run_id) if run_id else None)
+    pier_job = _resolve_pier_job(layout, last=last, run_id=run_id)
+    run_dir = (
+        None
+        if last and pier_job is not None
+        else (layout.latest_run() if last else (layout.find_run(run_id) if run_id else None))
+    )
     if run_dir is None:
-        err.print("[red]Run not found.[/red] Pass a run id or --last.")
-        raise typer.Exit(1)
+        if pier_job is None:
+            err.print("[red]Run not found.[/red] Pass a run id or --last.")
+            raise typer.Exit(1)
+        from .swebench import SwebenchDockerEvaluator
+
+        progress = _make_progress() if verbose else None
+        evaluator = SwebenchDockerEvaluator(max_workers=max_workers, stream=progress)
+        try:
+            report = grade_pier_job(
+                pier_job,
+                evaluator=evaluator,
+                run_id_prefix=run_id_prefix,
+                layout=layout,
+                progress=progress,
+            )
+        except SweBenchError as exc:
+            err.print(f"[red]error:[/red] {exc}")
+            raise typer.Exit(1) from exc
+
+        console.print(
+            f"[green]Graded {report.n_graded} Pier trial(s)[/green]: "
+            f"{report.n_resolved} resolved, {report.n_graded - report.n_resolved} unresolved."
+        )
+        console.print(f"[dim]{pier_job / 'summary.md'}[/dim]")
+        return
 
     from .swebench import SwebenchDockerEvaluator
 
@@ -600,8 +702,9 @@ def _resolve_trial_events(
     if variant is not None:
         vdir = variants_dir / variant
     else:
-        subdirs = sorted(p for p in variants_dir.iterdir() if p.is_dir()) \
-            if variants_dir.is_dir() else []
+        subdirs = (
+            sorted(p for p in variants_dir.iterdir() if p.is_dir()) if variants_dir.is_dir() else []
+        )
         if not subdirs:
             return None, run_dir.name
         vdir = subdirs[0]
@@ -610,8 +713,7 @@ def _resolve_trial_events(
     if task is not None:
         tkdir = tasks_dir / task
     else:
-        subdirs = sorted(p for p in tasks_dir.iterdir() if p.is_dir()) \
-            if tasks_dir.is_dir() else []
+        subdirs = sorted(p for p in tasks_dir.iterdir() if p.is_dir()) if tasks_dir.is_dir() else []
         if not subdirs:
             return None, f"{run_dir.name} · {vdir.name}"
         tkdir = subdirs[0]
@@ -620,8 +722,9 @@ def _resolve_trial_events(
     if trial is not None:
         tdir = trials_dir / f"{trial:03d}"
     else:
-        subdirs = sorted(p for p in trials_dir.iterdir() if p.is_dir()) \
-            if trials_dir.is_dir() else []
+        subdirs = (
+            sorted(p for p in trials_dir.iterdir() if p.is_dir()) if trials_dir.is_dir() else []
+        )
         if not subdirs:
             return None, f"{run_dir.name} · {vdir.name}/{tkdir.name}"
         tdir = subdirs[0]
@@ -629,6 +732,14 @@ def _resolve_trial_events(
     label = f"{run_dir.name} · {vdir.name}/{tkdir.name}/{tdir.name}"
     events_path = tdir / "events.jsonl"
     return (events_path if events_path.exists() else None), label
+
+
+def _resolve_pier_job(layout: Layout, *, last: bool, run_id: str | None) -> Path | None:
+    if last:
+        return layout.latest_pier_job()
+    if run_id:
+        return layout.find_pier_job(run_id)
+    return None
 
 
 def _print_dry_run_report(report: DryRunReport) -> None:
@@ -699,9 +810,7 @@ def _warn_failed_trials(layout: Layout, experiment: Experiment, run: ExperimentR
                     experiment.slug, run.run_id, vr.variant.slug, tr.task_slug, trial.trial_no
                 )
                 label = (
-                    "harness failure"
-                    if trial.status == "harness_error"
-                    else "copilot did not run"
+                    "harness failure" if trial.status == "harness_error" else "copilot did not run"
                 )
                 detail = trial.error or trial.status
                 artifact = trial.error_artifact or "stdout.txt"
@@ -719,6 +828,36 @@ def _warn_failed_trials(layout: Layout, experiment: Experiment, run: ExperimentR
     )
     for line in problems:
         err.print(f"[yellow]{line}[/yellow]")
+
+
+def _inspect_pier_job(job_dir: Path) -> None:
+    summary = write_pier_summary(job_dir)
+    console.print(f"[bold]Pier job[/bold]: {job_dir.name}")
+    console.print(f"[bold]summary[/bold]: {job_dir / 'summary.json'}")
+    _print_run_summary(summary)
+
+    table = Table(title=f"Trials in {job_dir.name}")
+    table.add_column("trial")
+    table.add_column("status")
+    table.add_column("success")
+    table.add_column("events")
+    for trial_dir in sorted(
+        path for path in job_dir.iterdir() if path.is_dir() and (path / "result.json").exists()
+    ):
+        result = read_json(trial_dir / "result.json")
+        exception = result.get("exception_info")
+        rewards = (result.get("verifier_result") or {}).get("rewards") or {}
+        success = "-"
+        if rewards:
+            success = "yes" if any(float(value) > 0 for value in rewards.values()) else "no"
+        events_path, _label = resolve_pier_trial_events(job_dir, trial_dir.name)
+        table.add_row(
+            trial_dir.name,
+            "harness_error" if exception else "ok",
+            success,
+            "yes" if events_path else "no",
+        )
+    console.print(table)
 
 
 def _print_run_summary(summary: dict) -> None:
@@ -801,4 +940,3 @@ def _num(value: object) -> str:
 
 if __name__ == "__main__":
     app()
-

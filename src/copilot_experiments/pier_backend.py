@@ -1,0 +1,139 @@
+"""Pier job loading and execution helpers."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from .pier_agents.copilot_cli import COPILOT_CLI_AGENT_NAME, CopilotCli
+
+COPILOT_CLI_AGENT_IMPORT_PATH = CopilotCli.import_path()
+
+
+@dataclass(frozen=True)
+class PierJobSpec:
+    """A discovered Pier job config file."""
+
+    path: Path
+    config: Any
+
+    @property
+    def name(self) -> str:
+        return str(self.config.job_name)
+
+
+@dataclass(frozen=True)
+class PierRunResult:
+    """Result returned after running one Pier job."""
+
+    job_dir: Path
+    result: Any
+
+
+def discover_pier_job_configs(root: Path, name: str | None = None) -> list[PierJobSpec]:
+    """Load Pier JobConfig files from ``experiments/*.yaml|*.yml|*.json``."""
+
+    root = Path(root)
+    experiments_dir = root / "experiments"
+    if not experiments_dir.is_dir():
+        return []
+
+    specs: list[PierJobSpec] = []
+    paths = [
+        *experiments_dir.glob("*.yaml"),
+        *experiments_dir.glob("*.yml"),
+        *experiments_dir.glob("*.json"),
+    ]
+    for path in sorted(paths):
+        config = load_pier_job_config(path, root=root)
+        spec = PierJobSpec(path=path, config=config)
+        if name and name not in (path.stem, spec.name):
+            continue
+        specs.append(spec)
+    return specs
+
+
+def load_pier_job_config(path: Path, *, root: Path | None = None) -> Any:
+    """Load and normalize a Pier ``JobConfig`` from YAML or JSON."""
+
+    from pier.models.job.config import JobConfig
+
+    path = Path(path)
+    if path.suffix.lower() == ".json":
+        data = json.loads(path.read_text(encoding="utf-8"))
+    elif path.suffix.lower() in {".yaml", ".yml"}:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    else:
+        raise ValueError(f"Unsupported Pier job config format: {path.suffix}")
+
+    config = JobConfig.model_validate(data)
+    return normalize_pier_job_config(
+        config,
+        root=Path(root or path.parent.parent),
+        base_dir=path.parent,
+    )
+
+
+def normalize_pier_job_config(config: Any, *, root: Path, base_dir: Path) -> Any:
+    """Resolve relative paths and map local ``copilot-cli`` agent names to import paths."""
+
+    config.jobs_dir = _resolve_path(config.jobs_dir, root)
+
+    for task in config.tasks:
+        if task.path is not None:
+            task.path = _resolve_path(task.path, base_dir)
+        if task.download_dir is not None:
+            task.download_dir = _resolve_path(task.download_dir, root)
+
+    for dataset in config.datasets:
+        if dataset.path is not None:
+            dataset.path = _resolve_path(dataset.path, base_dir)
+        if dataset.download_dir is not None:
+            dataset.download_dir = _resolve_path(dataset.download_dir, root)
+        if dataset.registry_path is not None:
+            dataset.registry_path = _resolve_path(dataset.registry_path, root)
+
+    for agent in config.agents:
+        if agent.name == COPILOT_CLI_AGENT_NAME and agent.import_path is None:
+            agent.name = None
+            agent.import_path = COPILOT_CLI_AGENT_IMPORT_PATH
+
+    return config
+
+
+def inject_copilot_token(config: Any, token: str) -> None:
+    """Inject a GitHub token into local Copilot agents without persisting it to config."""
+
+    for agent in config.agents:
+        is_copilot = (
+            agent.import_path == COPILOT_CLI_AGENT_IMPORT_PATH
+            or agent.name == COPILOT_CLI_AGENT_NAME
+        )
+        if not is_copilot:
+            continue
+        agent.env.setdefault("COPILOT_GITHUB_TOKEN", token)
+        agent.env.setdefault("GITHUB_TOKEN", token)
+        agent.env.setdefault("GH_TOKEN", token)
+
+
+def run_pier_job(config: Any) -> PierRunResult:
+    """Run a Pier job through Pier's Python API."""
+
+    from pier.job import Job
+
+    async def _run() -> PierRunResult:
+        job = await Job.create(config)
+        result = await job.run()
+        return PierRunResult(job_dir=job.job_dir, result=result)
+
+    return asyncio.run(_run())
+
+
+def _resolve_path(path: Path, base: Path) -> Path:
+    path = Path(path)
+    return path if path.is_absolute() else (base / path).resolve()

@@ -1,8 +1,12 @@
 # 0008. `--dry-run` is an ephemeral, validating plumbing check
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0015](0015-adopt-pier-for-sandboxed-agent-evals.md) for Pier runs
 - **Date:** 2026-06-15
 - **Deciders:** project owner, Copilot
+
+> **Amendment (ADR-0015):** this remains true for legacy Python experiments. Pier-native
+> `--dry-run` validates Pier job configs without running a sandbox; Pier execution smoke tests
+> should use explicit optional integration tests.
 
 ## Context
 

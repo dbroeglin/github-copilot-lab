@@ -10,7 +10,12 @@ experiment repo — experiment-authoring context is a template under
 `src/copilot_experiments/templates/experiment_repo/`.
 
 ## Always
-- Run `uv run ruff check .` and `uv run pytest -q` before considering work done; keep both green.
+- Run `uv run ruff check --fix .`, `uv run ruff format .`, `uv run ruff check .`, and
+  `uv run pytest -q` before considering work done; keep all green.
+- Treat perfectly linted/formatted code as non-negotiable. Ruff owns Python linting and
+  formatting, and CI/pre-commit enforce it.
+- Maintain good test coverage for every behavior change with focused offline tests, not just broad
+  smoke coverage.
 - Keep tests offline: exercise the runner with `MockInvoker` (and a `solver` for the success
   path) plus a temp `--root`. Never invoke the real `copilot` binary or the network in tests.
 - Preserve invariants: filesystem is source of truth (`reindex` rebuilds `index.db`); secrets are

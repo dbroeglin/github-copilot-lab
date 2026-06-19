@@ -26,17 +26,20 @@ offline.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
+import tomllib
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
-from ._util import read_json, write_json, write_text
-from .index import connect, index_run_dir
+from ._util import read_json, slugify, write_json, write_text
+from .index import connect, index_pier_job_dir, index_run_dir
 from .models import ExperimentRun, SweBenchInstance, Task
+from .pier_results import iter_trial_dirs, write_pier_summary
 from .report import build_summary, summary_markdown
 from .storage import Layout
 
@@ -215,6 +218,234 @@ def load_tasks(
 
 
 # --------------------------------------------------------------------------- #
+# Pier task materialization
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class PierSweBenchMaterialization:
+    """Files written by the Pier-native SWE-bench initializer."""
+
+    instances_path: Path
+    job_path: Path
+    task_dirs: list[Path]
+
+
+def materialize_pier_swebench(
+    root: Path,
+    records: Sequence[dict],
+    *,
+    name: str = "swebench",
+    dataset: str = DEFAULT_DATASET,
+    models: Sequence[str] = ("gpt-5-mini",),
+    effort: str | None = None,
+    trials: int = 2,
+    force: bool = False,
+    prompt_template: str = DEFAULT_PROMPT_TEMPLATE,
+) -> PierSweBenchMaterialization:
+    """Write SWE-bench instances as Pier task directories plus one Pier job YAML."""
+
+    root = Path(root)
+    instances_path = root / "swebench" / "instances.json"
+    job_path = root / "experiments" / f"{slugify(name)}.yaml"
+    if job_path.exists() and not force:
+        raise SweBenchError(f"{job_path} already exists (use --force to overwrite)")
+
+    task_dirs: list[Path] = []
+    for record in records:
+        task_dirs.append(
+            _write_pier_swebench_task(
+                root,
+                record,
+                dataset=dataset,
+                prompt_template=prompt_template,
+                force=force,
+            )
+        )
+
+    write_json(instances_path, list(records))
+    write_text(
+        job_path,
+        _pier_swebench_job_yaml(
+            name=name,
+            models=list(models),
+            effort=effort,
+            trials=trials,
+            task_dirs=task_dirs,
+            root=root,
+        ),
+    )
+    return PierSweBenchMaterialization(
+        instances_path=instances_path,
+        job_path=job_path,
+        task_dirs=task_dirs,
+    )
+
+
+def _write_pier_swebench_task(
+    root: Path,
+    record: dict,
+    *,
+    dataset: str,
+    prompt_template: str,
+    force: bool,
+) -> Path:
+    instance_id = str(record.get("instance_id") or "")
+    repo = record.get("repo")
+    base_commit = record.get("base_commit")
+    repo_url = _repo_url(repo)
+    if not instance_id:
+        raise SweBenchError("Instance record is missing 'instance_id'")
+    if not repo_url or not base_commit:
+        raise SweBenchError(f"Instance {instance_id} is missing repo or base_commit")
+
+    task_dir = root / "tasks" / slugify(instance_id)
+    if task_dir.exists() and any(task_dir.iterdir()) and not force:
+        raise SweBenchError(f"{task_dir} already exists (use --force to overwrite)")
+
+    instruction = prompt_template.format(
+        repo=repo or instance_id,
+        problem_statement=record.get("problem_statement", "") or "",
+    )
+    write_text(task_dir / "instruction.md", instruction)
+    write_text(task_dir / "task.toml", _pier_swebench_task_toml(record, dataset=dataset))
+    write_text(
+        task_dir / "environment" / "Dockerfile",
+        _pier_swebench_dockerfile(repo_url, base_commit),
+    )
+    write_text(task_dir / "tests" / "test.sh", _pier_swebench_disabled_verifier())
+    return task_dir
+
+
+def _pier_swebench_task_toml(record: dict, *, dataset: str) -> str:
+    instance_id = str(record["instance_id"])
+    difficulty = record.get("difficulty")
+    fail_to_pass = _as_test_list(record.get("FAIL_TO_PASS"))
+    pass_to_pass = _as_test_list(record.get("PASS_TO_PASS"))
+    version = str(record["version"]) if record.get("version") is not None else ""
+    return "\n".join(
+        [
+            'version = "1.0"',
+            "",
+            "[task]",
+            f"name = {_q(f'swebench/{instance_id}')}",
+            f"description = {_q('SWE-bench instance ' + instance_id)}",
+            'authors = [{ name = "copilot-experiments" }]',
+            'keywords = ["copilot", "swebench", "python"]',
+            "",
+            "[metadata]",
+            f"dataset = {_q(dataset)}",
+            f"instance_id = {_q(instance_id)}",
+            f"repo = {_q(str(record.get('repo') or ''))}",
+            f"base_commit = {_q(str(record.get('base_commit') or ''))}",
+            f"version = {_q(version)}",
+            f"difficulty = {_q(str(difficulty or 'unknown'))}",
+            f"fail_to_pass = {_toml_list(fail_to_pass)}",
+            f"pass_to_pass = {_toml_list(pass_to_pass)}",
+            "",
+            "[agent]",
+            "timeout_sec = 1800.0",
+            "",
+            "[verifier]",
+            "timeout_sec = 120.0",
+            "",
+            "[environment]",
+            "build_timeout_sec = 1800.0",
+            "cpus = 2",
+            "memory_mb = 4096",
+            "storage_mb = 20480",
+            "gpus = 0",
+            "allow_internet = true",
+            'workdir = "/repo"',
+            "",
+        ]
+    )
+
+
+def _pier_swebench_dockerfile(repo_url: str, base_commit: str) -> str:
+    return "\n".join(
+        [
+            "FROM python:3.12-slim",
+            "",
+            "RUN apt-get update \\",
+            "    && apt-get install -y --no-install-recommends ca-certificates git \\",
+            "    && rm -rf /var/lib/apt/lists/*",
+            "",
+            f"RUN git clone --no-checkout {_shell_q(repo_url)} /repo",
+            "WORKDIR /repo",
+            f"RUN git checkout {_shell_q(base_commit)}",
+            "",
+        ]
+    )
+
+
+def _pier_swebench_disabled_verifier() -> str:
+    return "\n".join(
+        [
+            "#!/usr/bin/env bash",
+            "set -euo pipefail",
+            "# Real SWE-bench grading happens outside this placeholder verifier.",
+            "echo 0 > /logs/verifier/reward.txt",
+            "",
+        ]
+    )
+
+
+def _pier_swebench_job_yaml(
+    *,
+    name: str,
+    models: list[str],
+    effort: str | None,
+    trials: int,
+    task_dirs: list[Path],
+    root: Path,
+) -> str:
+    lines = [
+        f"job_name: {slugify(name)}",
+        "jobs_dir: jobs",
+        f"n_attempts: {trials}",
+        "n_concurrent_trials: 1",
+        "verifier:",
+        "  disable: true",
+        "",
+        "agents:",
+    ]
+    for model in models:
+        lines.extend(
+            [
+                "  - name: copilot-cli",
+                f"    model_name: {model}",
+            ]
+        )
+        if effort:
+            lines.extend(["    kwargs:", f"      reasoning_effort: {effort}"])
+    lines.extend(["", "tasks:"])
+    for task_dir in task_dirs:
+        rel = Path(os.path.relpath(task_dir, root / "experiments"))
+        lines.append(f"  - path: {rel.as_posix()}")
+    lines.extend(
+        [
+            "",
+            "artifacts:",
+            "  - source: /repo",
+            "    destination: repo",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _q(value: str) -> str:
+    return json.dumps(value)
+
+
+def _toml_list(values: list[str]) -> str:
+    return "[" + ", ".join(_q(value) for value in values) + "]"
+
+
+def _shell_q(value: str) -> str:
+    return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
+# --------------------------------------------------------------------------- #
 # Predictions export
 # --------------------------------------------------------------------------- #
 @dataclass
@@ -297,6 +528,176 @@ def export_predictions(run_dir: Path) -> list[PredictionFile]:
                 )
             )
     return out
+
+
+# --------------------------------------------------------------------------- #
+# Pier predictions export + grading
+# --------------------------------------------------------------------------- #
+def export_pier_predictions(job_dir: Path) -> list[PredictionFile]:
+    """Build SWE-bench predictions from Pier trial artifacts.
+
+    Pier runs do not have the legacy ``workspace.diff`` artifact. For SWE-bench tasks
+    generated by :func:`materialize_pier_swebench`, the job captures ``/repo`` as
+    ``artifacts/repo``; this function derives a patch with local ``git diff`` from
+    that copied repository. No network or Docker work is performed here.
+    """
+
+    out: list[PredictionFile] = []
+    per_variant_task: dict[tuple[str, str], int] = {}
+    for trial_dir in iter_trial_dirs(job_dir):
+        trial = read_json(trial_dir / "result.json")
+        metadata = _pier_trial_swebench_metadata(trial)
+        instance_id = metadata.get("instance_id")
+        if not instance_id:
+            continue
+        agent = trial.get("agent_info") or {}
+        model_info = agent.get("model_info") or {}
+        variant_slug = _pier_variant_slug(agent, model_info)
+        task_name = str(trial.get("task_name") or instance_id)
+        key = (variant_slug, task_name)
+        per_variant_task[key] = per_variant_task.get(key, 0) + 1
+        trial_no = per_variant_task[key]
+        patch = _pier_trial_patch(trial_dir)
+
+        pf_path = (
+            Path(job_dir)
+            / "swebench"
+            / variant_slug
+            / task_name.replace("/", "__")
+            / f"trial-{trial_no:03d}"
+            / "predictions.jsonl"
+        )
+        prediction = {
+            "instance_id": instance_id,
+            "model_name_or_path": model_info.get("name") or variant_slug,
+            "model_patch": patch,
+        }
+        write_text(pf_path, json.dumps(prediction) + "\n")
+        out.append(
+            PredictionFile(
+                path=pf_path,
+                variant_slug=variant_slug,
+                model_name=model_info.get("name") or variant_slug,
+                trial_no=trial_no,
+                dataset=metadata.get("dataset") or DEFAULT_DATASET,
+                instances={instance_id: trial_dir},
+            )
+        )
+    return out
+
+
+def grade_pier_job(
+    job_dir: Path,
+    *,
+    evaluator: Evaluator | None = None,
+    run_id_prefix: str = "copilot-exp",
+    layout: Layout | None = None,
+    work_dir: Path | None = None,
+    progress: Callable[[str], None] | None = None,
+) -> GradeReport:
+    """Grade a Pier SWE-bench job and write verdicts back to trial ``result.json``."""
+
+    job_dir = Path(job_dir)
+    evaluator = evaluator or SwebenchDockerEvaluator()
+    pred_files = export_pier_predictions(job_dir)
+    if not pred_files:
+        raise SweBenchError(
+            f"No Pier SWE-bench tasks found in {job_dir}. Expected task.toml metadata "
+            "with an instance_id and a captured artifacts/repo git checkout."
+        )
+
+    report = GradeReport(run_id=job_dir.name)
+    work_root = work_dir or (job_dir / "swebench")
+    for pf in pred_files:
+        eval_run_id = f"{run_id_prefix}-{job_dir.name}-{pf.variant_slug}-t{pf.trial_no:03d}"
+        if progress is not None:
+            progress(
+                f"grading {pf.variant_slug} trial {pf.trial_no:03d} "
+                f"({len(pf.instances)} instance(s)) — run_id {eval_run_id}"
+            )
+        resolved = evaluator.evaluate(pf, run_id=eval_run_id, work_dir=work_root / "eval")
+        for instance_id, trial_dir in pf.instances.items():
+            is_resolved = instance_id in resolved
+            _write_back_pier_success(trial_dir, instance_id, is_resolved, eval_run_id)
+            report.verdicts.append(
+                TrialVerdict(
+                    variant_slug=pf.variant_slug,
+                    instance_id=instance_id,
+                    trial_no=pf.trial_no,
+                    resolved=is_resolved,
+                )
+            )
+
+    write_pier_summary(job_dir)
+    if layout is None:
+        layout = Layout(job_dir.parent.parent)
+    conn = connect(layout.index_db)
+    try:
+        index_pier_job_dir(conn, job_dir)
+    finally:
+        conn.close()
+    if progress is not None:
+        progress(f"graded {report.n_graded} trial(s): {report.n_resolved} resolved")
+    return report
+
+
+def _pier_trial_swebench_metadata(trial: dict) -> dict[str, str | None]:
+    task = (trial.get("config") or {}).get("task") or {}
+    task_path = task.get("path")
+    if not task_path:
+        return {}
+    task_toml = Path(task_path) / "task.toml"
+    if not task_toml.exists():
+        return {}
+    metadata = tomllib.loads(task_toml.read_text(encoding="utf-8")).get("metadata") or {}
+    return {
+        "dataset": metadata.get("dataset"),
+        "instance_id": metadata.get("instance_id"),
+        "difficulty": metadata.get("difficulty"),
+    }
+
+
+def _pier_variant_slug(agent: dict[str, Any], model_info: dict[str, Any]) -> str:
+    agent_name = str(agent.get("name") or "agent")
+    model_name = model_info.get("name")
+    return f"{agent_name}-{model_name}" if model_name else agent_name
+
+
+def _pier_trial_patch(trial_dir: Path) -> str:
+    diff_path = trial_dir / "workspace.diff"
+    if diff_path.exists():
+        return diff_path.read_text(encoding="utf-8")
+    repo_dir = trial_dir / "artifacts" / "repo"
+    if not (repo_dir / ".git").exists():
+        return ""
+    subprocess.run(
+        ["git", "-C", str(repo_dir), "add", "-N", "."],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    proc = subprocess.run(
+        ["git", "-C", str(repo_dir), "diff", "--binary", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.stdout if proc.returncode == 0 else ""
+
+
+def _write_back_pier_success(
+    trial_dir: Path, instance_id: str, resolved: bool, run_id: str
+) -> None:
+    result_path = trial_dir / "result.json"
+    result = read_json(result_path)
+    verifier_result = result.setdefault("verifier_result", {})
+    rewards = verifier_result.setdefault("rewards", {})
+    rewards["reward"] = 1.0 if resolved else 0.0
+    write_json(result_path, result)
+    write_json(
+        trial_dir / "swebench.json",
+        {"instance_id": instance_id, "resolved": resolved, "eval_run_id": run_id},
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -536,7 +937,9 @@ __all__ = [
     "SweBenchError",
     "TrialVerdict",
     "docker_available",
+    "export_pier_predictions",
     "export_predictions",
+    "grade_pier_job",
     "grade_run",
     "instance_to_task",
     "load_instances",

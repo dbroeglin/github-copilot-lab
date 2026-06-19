@@ -111,8 +111,8 @@ def analyze_events(events: list[dict[str, Any]]) -> SessionAnalysis:
     """Reconstruct a :class:`SessionAnalysis` from a list of session events."""
     analysis = SessionAnalysis()
     models: list[str] = []
-    tool_names: dict[str, str] = {}        # toolCallId -> toolName
-    tool_stats: dict[str, ToolStat] = {}   # toolName -> stat
+    tool_names: dict[str, str] = {}  # toolCallId -> toolName
+    tool_stats: dict[str, ToolStat] = {}  # toolName -> stat
     turns: list[TurnSummary] = []
     current: TurnSummary | None = None
     timestamps: list[_dt.datetime] = []

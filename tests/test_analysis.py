@@ -13,42 +13,103 @@ from copilot_experiments.render import render_session_analysis
 def _events() -> list[dict]:
     """A representative, real-schema multi-turn session log."""
     return [
-        {"type": "session.start", "timestamp": "2026-01-01T00:00:00.000Z", "data": {
-            "sessionId": "sess-1", "producer": "copilot-agent", "copilotVersion": "1.2.3",
-            "selectedModel": "claude-opus-4.8", "reasoningEffort": "high",
-            "startTime": "2026-01-01T00:00:00.000Z",
-            "context": {"repository": "acme/widgets", "branch": "main", "cwd": "/w"}}},
-        {"type": "user.message", "timestamp": "2026-01-01T00:00:01.000Z",
-         "data": {"content": "Fix the bug please"}},
+        {
+            "type": "session.start",
+            "timestamp": "2026-01-01T00:00:00.000Z",
+            "data": {
+                "sessionId": "sess-1",
+                "producer": "copilot-agent",
+                "copilotVersion": "1.2.3",
+                "selectedModel": "claude-opus-4.8",
+                "reasoningEffort": "high",
+                "startTime": "2026-01-01T00:00:00.000Z",
+                "context": {"repository": "acme/widgets", "branch": "main", "cwd": "/w"},
+            },
+        },
+        {
+            "type": "user.message",
+            "timestamp": "2026-01-01T00:00:01.000Z",
+            "data": {"content": "Fix the bug please"},
+        },
         # Turn 0: a successful view.
-        {"type": "assistant.turn_start", "timestamp": "2026-01-01T00:00:01.100Z",
-         "data": {"turnId": "0"}},
-        {"type": "assistant.message", "timestamp": "2026-01-01T00:00:01.500Z", "data": {
-            "model": "claude-opus-4.8", "content": "Looking at the code.", "outputTokens": 100,
-            "toolRequests": [{"toolCallId": "c1", "name": "view"}]}},
-        {"type": "tool.execution_start", "timestamp": "2026-01-01T00:00:01.600Z", "data": {
-            "toolCallId": "c1", "toolName": "view", "model": "claude-opus-4.8", "turnId": "0"}},
-        {"type": "tool.execution_complete", "timestamp": "2026-01-01T00:00:01.800Z",
-         "data": {"toolCallId": "c1", "success": True}},
-        {"type": "assistant.turn_end", "timestamp": "2026-01-01T00:00:02.000Z",
-         "data": {"turnId": "0"}},
+        {
+            "type": "assistant.turn_start",
+            "timestamp": "2026-01-01T00:00:01.100Z",
+            "data": {"turnId": "0"},
+        },
+        {
+            "type": "assistant.message",
+            "timestamp": "2026-01-01T00:00:01.500Z",
+            "data": {
+                "model": "claude-opus-4.8",
+                "content": "Looking at the code.",
+                "outputTokens": 100,
+                "toolRequests": [{"toolCallId": "c1", "name": "view"}],
+            },
+        },
+        {
+            "type": "tool.execution_start",
+            "timestamp": "2026-01-01T00:00:01.600Z",
+            "data": {
+                "toolCallId": "c1",
+                "toolName": "view",
+                "model": "claude-opus-4.8",
+                "turnId": "0",
+            },
+        },
+        {
+            "type": "tool.execution_complete",
+            "timestamp": "2026-01-01T00:00:01.800Z",
+            "data": {"toolCallId": "c1", "success": True},
+        },
+        {
+            "type": "assistant.turn_end",
+            "timestamp": "2026-01-01T00:00:02.000Z",
+            "data": {"turnId": "0"},
+        },
         # Turn 1: a failing powershell call.
-        {"type": "assistant.turn_start", "timestamp": "2026-01-01T00:00:02.100Z",
-         "data": {"turnId": "1"}},
-        {"type": "assistant.message", "timestamp": "2026-01-01T00:00:02.300Z", "data": {
-            "model": "claude-opus-4.8", "content": "Running tests.", "outputTokens": 50,
-            "toolRequests": [{"toolCallId": "c2", "name": "powershell"}]}},
-        {"type": "tool.execution_start", "timestamp": "2026-01-01T00:00:02.400Z", "data": {
-            "toolCallId": "c2", "toolName": "powershell", "model": "claude-opus-4.8",
-            "turnId": "1"}},
-        {"type": "tool.execution_complete", "timestamp": "2026-01-01T00:00:02.600Z",
-         "data": {"toolCallId": "c2", "success": False}},
+        {
+            "type": "assistant.turn_start",
+            "timestamp": "2026-01-01T00:00:02.100Z",
+            "data": {"turnId": "1"},
+        },
+        {
+            "type": "assistant.message",
+            "timestamp": "2026-01-01T00:00:02.300Z",
+            "data": {
+                "model": "claude-opus-4.8",
+                "content": "Running tests.",
+                "outputTokens": 50,
+                "toolRequests": [{"toolCallId": "c2", "name": "powershell"}],
+            },
+        },
+        {
+            "type": "tool.execution_start",
+            "timestamp": "2026-01-01T00:00:02.400Z",
+            "data": {
+                "toolCallId": "c2",
+                "toolName": "powershell",
+                "model": "claude-opus-4.8",
+                "turnId": "1",
+            },
+        },
+        {
+            "type": "tool.execution_complete",
+            "timestamp": "2026-01-01T00:00:02.600Z",
+            "data": {"toolCallId": "c2", "success": False},
+        },
         {"type": "hook.start", "timestamp": "2026-01-01T00:00:02.650Z", "data": {}},
         {"type": "hook.end", "timestamp": "2026-01-01T00:00:02.660Z", "data": {}},
-        {"type": "session.warning", "timestamp": "2026-01-01T00:00:02.700Z",
-         "data": {"message": "heads up"}},
-        {"type": "assistant.turn_end", "timestamp": "2026-01-01T00:00:03.000Z",
-         "data": {"turnId": "1"}},
+        {
+            "type": "session.warning",
+            "timestamp": "2026-01-01T00:00:02.700Z",
+            "data": {"message": "heads up"},
+        },
+        {
+            "type": "assistant.turn_end",
+            "timestamp": "2026-01-01T00:00:03.000Z",
+            "data": {"turnId": "1"},
+        },
     ]
 
 

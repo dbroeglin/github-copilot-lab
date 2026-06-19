@@ -41,8 +41,14 @@ def test_index_persists_cost_columns(repo_root: Path, experiment: Experiment):
     conn = connect(layout.index_db)
     try:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(trials)")}
-        assert {"aiu", "cache_read_tokens", "lines_added", "peak_context_tokens",
-                "n_requests", "n_compactions"} <= cols
+        assert {
+            "aiu",
+            "cache_read_tokens",
+            "lines_added",
+            "peak_context_tokens",
+            "n_requests",
+            "n_compactions",
+        } <= cols
         row = conn.execute(
             "SELECT aiu, cache_read_tokens, total_tokens, n_requests, lines_added "
             "FROM trials LIMIT 1"
@@ -53,4 +59,3 @@ def test_index_persists_cost_columns(repo_root: Path, experiment: Experiment):
     assert row["aiu"] == 1.9275
     assert row["cache_read_tokens"] == 12_000
     assert row["n_requests"] == 4
-

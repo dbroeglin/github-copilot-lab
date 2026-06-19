@@ -1,0 +1,17 @@
+job_name: tracer-bullet-textstats
+jobs_dir: jobs
+n_attempts: 1
+n_concurrent_trials: 1
+
+agents:
+  - name: copilot-cli
+    model_name: gpt-5-mini
+    kwargs:
+      reasoning_effort: low
+
+tasks:
+  - path: ../tasks/textstats
+
+artifacts:
+  - source: /app/textstats.py
+    destination: textstats.py

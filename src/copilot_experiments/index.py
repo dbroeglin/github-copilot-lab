@@ -11,6 +11,7 @@ import sqlite3
 from pathlib import Path
 
 from ._util import read_json
+from .pier_results import build_pier_summary, iter_pier_trial_summaries
 from .storage import Layout
 
 SCHEMA = """
@@ -84,6 +85,30 @@ CREATE TABLE IF NOT EXISTS trials (
     model           TEXT,
     status          TEXT,
     error           TEXT
+);
+CREATE TABLE IF NOT EXISTS pier_jobs (
+    job_name       TEXT PRIMARY KEY,
+    job_dir        TEXT,
+    started_at     TEXT,
+    finished_at    TEXT,
+    n_trials       INTEGER,
+    success_rate   REAL,
+    status         TEXT
+);
+CREATE TABLE IF NOT EXISTS pier_trials (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_name       TEXT,
+    variant_slug   TEXT,
+    task_slug      TEXT,
+    trial_name     TEXT,
+    success        INTEGER,
+    status         TEXT,
+    n_turns        INTEGER,
+    n_tool_calls   INTEGER,
+    total_tokens   INTEGER,
+    aiu            REAL,
+    model          TEXT,
+    error          TEXT
 );
 """
 
@@ -240,8 +265,54 @@ def index_run_dir(conn: sqlite3.Connection, run_dir: Path) -> None:
     conn.commit()
 
 
+def index_pier_job_dir(conn: sqlite3.Connection, job_dir: Path) -> None:
+    """Insert (or replace) one Pier job into the derived index."""
+
+    summary = build_pier_summary(job_dir)
+    job_name = job_dir.name
+    conn.execute("DELETE FROM pier_jobs WHERE job_name=?", (job_name,))
+    conn.execute("DELETE FROM pier_trials WHERE job_name=?", (job_name,))
+
+    conn.execute(
+        "INSERT INTO pier_jobs(job_name, job_dir, started_at, finished_at, n_trials, "
+        "success_rate, status) VALUES (?,?,?,?,?,?,?)",
+        (
+            job_name,
+            str(job_dir),
+            summary.get("started_at"),
+            summary.get("finished_at"),
+            summary.get("n_trials"),
+            summary.get("overall_success_rate"),
+            summary.get("status"),
+        ),
+    )
+
+    for trial in iter_pier_trial_summaries(job_dir):
+        metrics = trial.get("metrics") or {}
+        conn.execute(
+            "INSERT INTO pier_trials(job_name, variant_slug, task_slug, trial_name, "
+            "success, status, n_turns, n_tool_calls, total_tokens, aiu, model, error) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                job_name,
+                trial.get("variant"),
+                trial.get("task"),
+                trial.get("trial_name"),
+                None if trial.get("success") is None else int(bool(trial.get("success"))),
+                trial.get("status"),
+                metrics.get("n_turns"),
+                metrics.get("n_tool_calls"),
+                metrics.get("total_tokens"),
+                metrics.get("aiu"),
+                trial.get("model"),
+                trial.get("error"),
+            ),
+        )
+    conn.commit()
+
+
 def reindex(layout: Layout) -> int:
-    """Rebuild the index from scratch by scanning ``results/``. Returns run count."""
+    """Rebuild the index from scratch by scanning legacy runs and Pier jobs."""
     if layout.index_db.exists():
         layout.index_db.unlink()
     conn = connect(layout.index_db)
@@ -249,6 +320,9 @@ def reindex(layout: Layout) -> int:
     try:
         for _slug, _run_id, run_dir in layout.iter_runs():
             index_run_dir(conn, run_dir)
+            count += 1
+        for job_dir in layout.iter_pier_jobs():
+            index_pier_job_dir(conn, job_dir)
             count += 1
     finally:
         conn.close()

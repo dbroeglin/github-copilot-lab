@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -15,11 +16,14 @@ from copilot_experiments.swebench import (
     DEFAULT_DATASET,
     PredictionFile,
     SweBenchError,
+    export_pier_predictions,
     export_predictions,
+    grade_pier_job,
     grade_run,
     instance_to_task,
     load_instances,
     load_tasks,
+    materialize_pier_swebench,
     parse_report,
 )
 
@@ -101,6 +105,34 @@ def test_load_tasks(tmp_path: Path):
 def test_instance_to_task_requires_instance_id():
     with pytest.raises(SweBenchError):
         instance_to_task({"repo": "x/y"})
+
+
+def test_materialize_pier_swebench_writes_tasks_and_job(tmp_path: Path):
+    from copilot_experiments.pier_backend import discover_pier_job_configs
+
+    materialized = materialize_pier_swebench(
+        tmp_path,
+        [SAMPLE_INSTANCE],
+        name="SWE smoke",
+        models=["gpt-5-mini"],
+        effort="low",
+        trials=2,
+    )
+
+    assert materialized.instances_path.exists()
+    assert materialized.job_path == tmp_path / "experiments" / "swe-smoke.yaml"
+    task_dir = tmp_path / "tasks" / "acme-widget-42"
+    assert task_dir in materialized.task_dirs
+    assert (task_dir / "task.toml").exists()
+    assert (task_dir / "instruction.md").read_text(encoding="utf-8").startswith("You are working")
+    assert "git clone" in (task_dir / "environment" / "Dockerfile").read_text(encoding="utf-8")
+
+    specs = discover_pier_job_configs(tmp_path)
+    assert len(specs) == 1
+    assert specs[0].config.job_name == "swe-smoke"
+    assert specs[0].config.n_attempts == 2
+    assert specs[0].config.verifier.disable is True
+    assert specs[0].config.tasks[0].path == task_dir.resolve()
 
 
 # --------------------------------------------------------------------------- #
@@ -278,6 +310,106 @@ def test_export_predictions_uses_variant_slug_not_name(tmp_path: Path):
     assert "claude-sonnet-4-5" in str(pf.path)
     rec = json.loads(pf.path.read_text(encoding="utf-8").strip())
     assert "SOLVED" in rec["model_patch"]
+
+
+def _write_json(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _make_pier_swebench_job(tmp_path: Path) -> tuple[Path, Path]:
+    task_dir = tmp_path / "tasks" / "acme-widget-42"
+    task_dir.mkdir(parents=True)
+    (task_dir / "task.toml").write_text(
+        "\n".join(
+            [
+                'version = "1.0"',
+                "",
+                "[task]",
+                'name = "swebench/acme__widget-42"',
+                "",
+                "[metadata]",
+                'dataset = "local-test"',
+                'instance_id = "acme__widget-42"',
+                'difficulty = "easy"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    job_dir = tmp_path / "jobs" / "swe-job"
+    _write_json(job_dir / "config.json", {"job_name": "swe-job"})
+    _write_json(job_dir / "result.json", {"stats": {"n_errored_trials": 0}})
+    trial_dir = job_dir / "copilot-cli__acme-widget-42__1"
+    _write_json(
+        trial_dir / "result.json",
+        {
+            "trial_name": trial_dir.name,
+            "task_name": "swebench/acme__widget-42",
+            "agent_info": {"name": "copilot-cli", "model_info": {"name": "gpt-5-mini"}},
+            "config": {"task": {"path": str(task_dir)}},
+            "verifier_result": {"rewards": {}},
+        },
+    )
+
+    repo = trial_dir / "artifacts" / "repo"
+    repo.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    (repo / "widget.py").write_text("value = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "commit", "-m", "baseline"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    (repo / "widget.py").write_text("value = 2\n", encoding="utf-8")
+    return job_dir, trial_dir
+
+
+def test_export_pier_predictions_reads_swebench_metadata_and_artifact_diff(tmp_path: Path):
+    job_dir, _trial_dir = _make_pier_swebench_job(tmp_path)
+
+    pred_files = export_pier_predictions(job_dir)
+
+    assert len(pred_files) == 1
+    pf = pred_files[0]
+    assert pf.dataset == "local-test"
+    assert pf.instances == {"acme__widget-42": job_dir / "copilot-cli__acme-widget-42__1"}
+    rec = json.loads(pf.path.read_text(encoding="utf-8"))
+    assert rec["instance_id"] == "acme__widget-42"
+    assert "-value = 1" in rec["model_patch"]
+    assert "+value = 2" in rec["model_patch"]
+
+
+def test_grade_pier_job_writes_back_rewards_summary_and_index(tmp_path: Path):
+    job_dir, trial_dir = _make_pier_swebench_job(tmp_path)
+
+    report = grade_pier_job(job_dir, evaluator=StubEvaluator(), layout=Layout(tmp_path))
+
+    assert report.n_graded == 1
+    assert report.n_resolved == 1
+    result = json.loads((trial_dir / "result.json").read_text(encoding="utf-8"))
+    assert result["verifier_result"]["rewards"]["reward"] == 1.0
+    assert json.loads((trial_dir / "swebench.json").read_text(encoding="utf-8"))["resolved"] is True
+    summary = json.loads((job_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary["overall_success_rate"] == 1.0
+    assert (tmp_path / "results" / "index.db").exists()
 
 
 def test_grade_run_without_swebench_tasks_raises(repo_root: Path, experiment):

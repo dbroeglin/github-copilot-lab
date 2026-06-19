@@ -1,7 +1,8 @@
 # Session-log analysis
 
-After a trial runs, the harness keeps the Copilot CLI **session log** (`events.jsonl`) and
-derives two things from it:
+After a Pier trial runs with the local `copilot-cli` agent, the job output keeps the native
+Copilot CLI **session log** (`agent/copilot-session/**/events.jsonl`) and derives two things from
+it:
 
 - **`metrics.json`** — a few flat counters used for aggregation and the SQLite index.
 - **`analysis.json`** — a richer, structured overview of *what happened* in the session.
@@ -15,11 +16,11 @@ This page covers the second one and the `analyze` command that renders it.
 ## The `analyze` command
 
 ```bash
-# Most recent run (first variant + first trial by default)
+# Most recent Pier job (first trial by default)
 uv run copilot-experiments analyze --last
 
-# A specific run / variant / trial
-uv run copilot-experiments analyze 20260614T1419 --variant default --trial 1
+# A specific Pier job / trial
+uv run copilot-experiments analyze tracer-bullet-textstats --trial 1
 
 # Any events.jsonl on disk — a stored trial log, or a live session under
 # ~/.copilot/session-state/<id>/events.jsonl
