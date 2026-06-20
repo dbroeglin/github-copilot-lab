@@ -46,8 +46,6 @@ def aggregate_task(tr: TaskResult) -> dict:
     return {
         "task": tr.task_slug,
         "name": tr.task_name,
-        "instance_id": tr.instance_id,
-        "difficulty": tr.difficulty,
         "n_trials": len(trials),
         "success_rate": tr.success_rate,
         "resolved": tr.resolved,
@@ -105,46 +103,6 @@ def aggregate_variant(vr: VariantResult) -> dict:
     }
 
 
-def _difficulty_breakdown(variant_summaries: list[dict]) -> list[dict]:
-    """Group per-(variant, task) cells by SWE-bench difficulty label.
-
-    Reproduces the paper's difficulty-vs-cost view: for each difficulty bucket we
-    report how many cells fall in it, the mean trial success, the resolved@k rate
-    (cells solved on at least one trial), and the average AIU / token spend. Returns
-    ``[]`` when no task carries a difficulty label (i.e. non-SWE-bench runs).
-    """
-    buckets: dict[str, list[dict]] = {}
-    for v in variant_summaries:
-        for t in v.get("tasks", []):
-            difficulty = t.get("difficulty")
-            if difficulty is None:
-                continue
-            buckets.setdefault(difficulty, []).append(t)
-    if not buckets:
-        return []
-
-    out: list[dict] = []
-    for difficulty, cells in sorted(buckets.items()):
-        success_rates = [c["success_rate"] for c in cells if c.get("success_rate") is not None]
-        resolved = [c["resolved"] for c in cells if c.get("resolved") is not None]
-        out.append(
-            {
-                "difficulty": difficulty,
-                "n_cells": len(cells),
-                "n_instances": len({c.get("instance_id") or c["task"] for c in cells}),
-                "mean_success_rate": _avg(success_rates),
-                "resolved_at_k_rate": (
-                    round(sum(1 for r in resolved if r) / len(resolved), 3) if resolved else None
-                ),
-                "avg_aiu": _avg([c["avg_aiu"] for c in cells if c.get("avg_aiu") is not None]),
-                "avg_total_tokens": _avg(
-                    [c["avg_total_tokens"] for c in cells if c.get("avg_total_tokens") is not None]
-                ),
-            }
-        )
-    return out
-
-
 def build_summary(run: ExperimentRun) -> dict:
     variant_summaries = [aggregate_variant(vr) for vr in run.variants]
     all_trials = [t for vr in run.variants for t in vr.all_trials]
@@ -168,7 +126,6 @@ def build_summary(run: ExperimentRun) -> dict:
         "n_copilot_failures": n_copilot_failures,
         "overall_success_rate": (sum(1 for s in graded if s) / len(graded)) if graded else None,
         "total_aiu": round(total_aiu, 3) if total_aiu else None,
-        "difficulty_breakdown": _difficulty_breakdown(variant_summaries),
         "variants": variant_summaries,
     }
 
@@ -303,29 +260,6 @@ def summary_markdown(summary: dict, description: str = "") -> str:
                         aiu=_aiu(t.get("avg_aiu")),
                     )
                 )
-
-    # Difficulty vs cost: does spend track SWE-bench difficulty? (paper's alignment view)
-    difficulty_rows = summary.get("difficulty_breakdown") or []
-    if difficulty_rows:
-        lines += [
-            "",
-            "## Difficulty vs cost",
-            "",
-            "| Difficulty | Instances | Cells | Mean success | Resolved@k | Avg AIU | Avg tokens |",
-            "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
-        ]
-        for d in difficulty_rows:
-            lines.append(
-                "| {diff} | {ni} | {nc} | {ms} | {rk} | {aiu} | {tok} |".format(
-                    diff=d["difficulty"],
-                    ni=d["n_instances"],
-                    nc=d["n_cells"],
-                    ms=_pct(d.get("mean_success_rate")),
-                    rk=_pct(d.get("resolved_at_k_rate")),
-                    aiu=_aiu(d.get("avg_aiu")),
-                    tok=_fmt(d.get("avg_total_tokens")),
-                )
-            )
 
     lines.append("")
     return "\n".join(lines)

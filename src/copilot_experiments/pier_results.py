@@ -5,12 +5,15 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from ._util import read_json, write_json, write_text
+from .analysis import analyze_trajectory
 from .pier_agents.copilot_cli import find_copilot_session_events
 from .report import summary_markdown
 from .sessionlog import load_events, parse_metrics
+
+AnalysisSource = Literal["events", "trajectory"]
 
 
 def iter_trial_dirs(job_dir: Path) -> list[Path]:
@@ -95,7 +98,6 @@ def build_pier_summary(job_dir: Path) -> dict[str, Any]:
             (sum(1 for value in graded if value) / len(graded)) if graded else None
         ),
         "total_aiu": round(total_aiu, 3) if total_aiu else None,
-        "difficulty_breakdown": [],
         "variants": [_strip_internal_trials(variant) for variant in variants],
     }
     return summary
@@ -111,20 +113,41 @@ def write_pier_summary(job_dir: Path) -> dict[str, Any]:
 def resolve_pier_trial_events(
     job_dir: Path, trial: int | str | None = None
 ) -> tuple[Path | None, str]:
-    trial_dirs = iter_trial_dirs(job_dir)
-    if not trial_dirs:
-        return None, Path(job_dir).name
-    if trial is None:
-        trial_dir = trial_dirs[0]
-    elif isinstance(trial, int):
-        index = trial - 1
-        trial_dir = trial_dirs[index] if 0 <= index < len(trial_dirs) else None
-    else:
-        trial_dir = next((path for path in trial_dirs if path.name == trial), None)
+    trial_dir = _resolve_trial_dir(job_dir, trial)
     if trial_dir is None:
         return None, Path(job_dir).name
     events = find_copilot_session_events(trial_dir / "agent")
     return events, f"{Path(job_dir).name} · {trial_dir.name}"
+
+
+def resolve_pier_trial_analysis_source(
+    job_dir: Path, trial: int | str | None = None
+) -> tuple[Path | None, str, AnalysisSource | None]:
+    trial_dir = _resolve_trial_dir(job_dir, trial)
+    if trial_dir is None:
+        return None, Path(job_dir).name, None
+
+    label = f"{Path(job_dir).name} · {trial_dir.name}"
+    events = find_copilot_session_events(trial_dir / "agent")
+    if events is not None:
+        return events, label, "events"
+
+    trajectory = trial_dir / "agent" / "trajectory.json"
+    if trajectory.exists():
+        return trajectory, label, "trajectory"
+    return None, label, None
+
+
+def _resolve_trial_dir(job_dir: Path, trial: int | str | None = None) -> Path | None:
+    trial_dirs = iter_trial_dirs(job_dir)
+    if not trial_dirs:
+        return None
+    if trial is None:
+        return trial_dirs[0]
+    if isinstance(trial, int):
+        index = trial - 1
+        return trial_dirs[index] if 0 <= index < len(trial_dirs) else None
+    return next((path for path in trial_dirs if path.name == trial), None)
 
 
 def _trial_summary(trial_dir: Path, trial: dict[str, Any]) -> dict[str, Any]:
@@ -161,17 +184,22 @@ def _native_metrics(agent_dir: Path) -> dict[str, Any]:
         trajectory = agent_dir / "trajectory.json"
         if not trajectory.exists():
             return {}
-        final = read_json(trajectory).get("final_metrics") or {}
+        analysis = analyze_trajectory(read_json(trajectory))
         return {
-            "input_tokens": final.get("total_prompt_tokens"),
-            "output_tokens": final.get("total_completion_tokens"),
-            "cache_read_tokens": final.get("total_cached_tokens"),
-            "total_tokens": (
-                (final.get("total_prompt_tokens") or 0)
-                + (final.get("total_completion_tokens") or 0)
-            )
-            or None,
-            "n_turns": final.get("total_steps"),
+            "n_turns": analysis.n_turns,
+            "n_assistant_messages": analysis.n_assistant_messages,
+            "n_tool_calls": analysis.n_tool_calls,
+            "n_tool_failures": analysis.n_tool_failures,
+            "models": analysis.models,
+            "duration_s": analysis.duration_s,
+            "input_tokens": analysis.input_tokens,
+            "output_tokens": analysis.output_tokens,
+            "total_tokens": analysis.total_tokens,
+            "cache_read_tokens": analysis.economics.cache_read_tokens,
+            "reasoning_tokens": analysis.economics.reasoning_tokens,
+            "aiu": analysis.economics.aiu,
+            "peak_context_tokens": analysis.economics.peak_context_tokens,
+            "n_compactions": analysis.economics.n_compactions,
         }
     parsed = parse_metrics(load_events(events))
     return parsed.model_dump(mode="json")
@@ -212,8 +240,6 @@ def _aggregate_task(task_slug: str, trials: list[dict[str, Any]]) -> dict[str, A
     return {
         "task": task_slug,
         "name": trials[0].get("task_name") or task_slug,
-        "instance_id": None,
-        "difficulty": None,
         "n_trials": len(trials),
         "success_rate": (solved / len(graded)) if graded else None,
         "resolved": None if not graded else int(any(graded)),

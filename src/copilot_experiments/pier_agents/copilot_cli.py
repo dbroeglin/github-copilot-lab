@@ -225,13 +225,42 @@ class CopilotCli(BaseInstalledAgent):
             setup_commands.append(skills_command)
         setup = " && ".join(setup_commands)
 
-        escaped_instruction = shlex.quote(instruction)
-        command = (
-            f"{setup} && "
-            f"copilot -p {escaped_instruction} --output-format json {flag_text} "
-            f"2>&1 | tee {shlex.quote(jsonl_path)} > {shlex.quote(output_path)}"
+        command = self._build_run_command(
+            setup=setup,
+            instruction=instruction,
+            flag_text=flag_text,
+            session_id=session_id,
+            session_root=session_root,
+            jsonl_path=jsonl_path,
+            output_path=output_path,
         )
         await self.exec_as_agent(environment, command=command, env=env)
+
+    def _build_run_command(
+        self,
+        *,
+        setup: str,
+        instruction: str,
+        flag_text: str,
+        session_id: str,
+        session_root: str,
+        jsonl_path: str,
+        output_path: str,
+    ) -> str:
+        escaped_instruction = shlex.quote(instruction)
+        run_script = (
+            'export PATH="$HOME/.local/bin:$PATH"; '
+            "set -o pipefail; "
+            f"copilot -p {escaped_instruction} --output-format json {flag_text} "
+            f"2>&1 | tee {shlex.quote(jsonl_path)} > {shlex.quote(output_path)}; "
+            "status=${PIPESTATUS[0]}; "
+            f'session_state="$HOME/.copilot/session-state/{session_id}"; '
+            f'if [ -d "$session_state" ]; then cp -a "$session_state" '
+            f"{shlex.quote(session_root)}; "
+            'else echo "Copilot session state not found: $session_state" >&2; fi; '
+            "exit $status"
+        )
+        return f"{setup} && bash -lc {shlex.quote(run_script)}"
 
     def populate_context_post_run(self, context: AgentContext) -> None:
         """Convert captured Copilot logs to ATIF and Pier context metrics."""

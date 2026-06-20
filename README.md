@@ -63,7 +63,6 @@ uv run copilot-experiments analyze --root examples/tracer_bullet --last
 
 - [`examples/tracer_bullet`](examples/tracer_bullet) - one small task, cheap Copilot model.
 - [`examples/task_suite`](examples/task_suite) - two tasks of different difficulty.
-- [`examples/swebench`](examples/swebench) - local SWE-bench-shaped Pier tasks.
 
 ## CLI
 
@@ -85,7 +84,6 @@ uv run copilot-experiments analyze --root examples/tracer_bullet --last
 - [`docs/results-format.md`](docs/results-format.md) - `jobs/` layout and derived index.
 - [`docs/analysis.md`](docs/analysis.md) - native Copilot session analysis.
 - [`docs/byok-and-local-models.md`](docs/byok-and-local-models.md) - provider env for Copilot CLI.
-- [`docs/swebench.md`](docs/swebench.md) - SWE-bench direction after the Pier refactor.
 - [`docs/adr/`](docs/adr) - architecture decision records.
 
 ## Development

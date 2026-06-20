@@ -96,48 +96,6 @@ class ProviderConfig(BaseModel):
         return data
 
 
-class SweBenchInstance(BaseModel):
-    """Per-instance SWE-bench metadata carried alongside a :class:`Task`.
-
-    Lets the harness reproduce the protocol from Bai et al. ("How Do Coding Agents
-    Spend Your Money?"): each task is one SWE-bench instance, the ``trials`` axis is
-    the paper's repeated "runs", and grading is delegated to the official ``swebench``
-    Docker harness. These fields are everything that stage needs to build a
-    ``predictions.jsonl`` and map ground-truth ``resolved_ids`` back to trials. The
-    test lists are stored for provenance/debugging; the official harness re-reads them
-    from the dataset by ``instance_id`` at evaluation time.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    instance_id: str
-    """The canonical SWE-bench instance id (e.g. ``django__django-11099``)."""
-
-    dataset: str = "princeton-nlp/SWE-bench_Verified"
-    """HF dataset (or split) the instance came from; passed to the grader."""
-
-    repo: str | None = None
-    """``owner/name`` of the upstream repository."""
-
-    base_commit: str | None = None
-    """Commit the agent starts from (mirrors ``Task.ref``)."""
-
-    environment_setup_commit: str | None = None
-    """Commit whose environment the official harness builds the image from."""
-
-    version: str | None = None
-    """Repo version label SWE-bench uses to pick the right environment image."""
-
-    difficulty: str | None = None
-    """Human difficulty label (SWE-bench Verified), e.g. ``"<15 min fix"``."""
-
-    fail_to_pass: list[str] = Field(default_factory=list)
-    """Tests that must flip from failing to passing for the instance to be resolved."""
-
-    pass_to_pass: list[str] = Field(default_factory=list)
-    """Tests that must keep passing (regression guard)."""
-
-
 class Task(BaseModel):
     """What Copilot is asked to do, and how to provision/verify the workspace."""
 
@@ -166,11 +124,6 @@ class Task(BaseModel):
     verify: str | None = None
     """Shell command run in the workspace after Copilot finishes. Exit code 0
     means the trial succeeded. ``None`` means effectiveness is not measured."""
-
-    swebench: SweBenchInstance | None = None
-    """SWE-bench instance metadata. When set, the task is graded by the official
-    ``swebench`` Docker harness (see :mod:`copilot_experiments.swebench`) rather than
-    by ``verify``; the candidate patch is the trial's captured ``workspace.diff``."""
 
 
 class Variant(BaseModel):
@@ -487,10 +440,6 @@ class TaskResult(BaseModel):
     task_slug: str
     task_name: str | None = None
     prompt: str | None = None
-    instance_id: str | None = None
-    """SWE-bench instance id when this task is a SWE-bench instance (else ``None``)."""
-    difficulty: str | None = None
-    """SWE-bench difficulty label, surfaced for the difficulty-vs-cost analysis."""
     trials: list[TrialResult] = Field(default_factory=list)
 
     @property

@@ -79,7 +79,6 @@ def test_inject_copilot_token_only_updates_copilot_agents(tmp_path: Path):
     [
         "examples/tracer_bullet",
         "examples/task_suite",
-        "examples/swebench",
     ],
 )
 def test_committed_examples_are_valid_pier_configs(example_root: str):

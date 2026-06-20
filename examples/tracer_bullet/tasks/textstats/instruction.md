@@ -1,5 +1,12 @@
-This project has failing tests. Implement the three functions in `textstats.py` so that
-`python -m pytest -q /tests/test_textstats.py` passes.
+Implement the three functions in `textstats.py` so the hidden verifier passes.
 
-First read `test_textstats.py` to learn the exact expected behavior, then implement each
-function, then run the tests and fix anything that fails. Do not modify the tests.
+Expected behavior:
+
+- `word_count(text)` returns the number of whitespace-separated words.
+- `char_count(text, include_spaces=True)` returns all characters when `include_spaces` is true;
+  otherwise it excludes all whitespace characters.
+- `top_words(text, n)` returns the `n` most common words as `(word, count)` tuples, comparing words
+  case-insensitively and ordering ties alphabetically.
+
+You may validate with small Python snippets from `/app`. The verifier tests are outside the
+workspace and should not be modified.

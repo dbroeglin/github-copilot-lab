@@ -17,7 +17,7 @@ def test_char_count_with_spaces():
 
 
 def test_char_count_without_spaces():
-    assert char_count("a b\tc\n") == 3
+    assert char_count("a b\tc\n", include_spaces=False) == 3
 
 
 def test_top_words_orders_by_count_then_word():

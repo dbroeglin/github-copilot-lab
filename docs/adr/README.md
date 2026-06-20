@@ -30,5 +30,6 @@ We follow the lightweight format popularized by
 | [0011](0011-token-economics-from-session-shutdown.md) | Token economics from `session.shutdown`, costed in AIU | Accepted |
 | [0012](0012-task-suite-as-experiment-axis.md) | A task suite is an axis of an experiment | Superseded by ADR-0015 |
 | [0013](0013-auth-preflight-and-trial-diagnostics.md) | Auth preflight, harness-failure status, and richer trial diagnostics | Accepted |
-| [0014](0014-swebench-task-source-and-docker-grading.md) | SWE-bench as a task source with decoupled Docker grading | Narrowed by ADR-0015 |
+| [0014](0014-swebench-task-source-and-docker-grading.md) | SWE-bench as a task source with decoupled Docker grading | Superseded by ADR-0016 |
 | [0015](0015-adopt-pier-for-sandboxed-agent-evals.md) | Adopt Pier for sandboxed agent evaluations | Accepted |
+| [0016](0016-use-deepswe-for-large-benchmark-protocols.md) | Use DeepSWE for large benchmark protocols | Accepted |

@@ -12,27 +12,21 @@ from rich.console import Console
 from rich.table import Table
 
 from ._util import read_json
-from .analysis import analyze_events
+from .analysis import analyze_events, analyze_trajectory
 from .auth import AuthError, preflight_github_token
 from .index import list_runs as index_list_runs
 from .index import reindex as index_reindex
 from .models import DryRunReport, Experiment, ExperimentRun
 from .pier_backend import discover_pier_job_configs, inject_copilot_token, run_pier_job
-from .pier_results import resolve_pier_trial_events, write_pier_summary
+from .pier_results import (
+    resolve_pier_trial_analysis_source,
+    write_pier_summary,
+)
 from .render import render_session_analysis
 from .runner import dry_run_experiment, run_experiment
 from .scaffold import ScaffoldError, init_experiment_repo
 from .sessionlog import load_events
 from .storage import Layout
-from .swebench import (
-    DEFAULT_DATASET,
-    DEFAULT_SPLIT,
-    SweBenchError,
-    grade_pier_job,
-    grade_run,
-    load_instances,
-    materialize_pier_swebench,
-)
 
 
 def _force_utf8_streams() -> None:
@@ -506,13 +500,16 @@ def analyze(
     )
     if run_dir is None:
         if pier_job is not None:
-            events_path, label = resolve_pier_trial_events(pier_job, trial)
-            if events_path is None:
-                err.print(f"[red]No Copilot session log found in[/red] {pier_job}")
+            source_path, label, source_kind = resolve_pier_trial_analysis_source(pier_job, trial)
+            if source_path is None:
+                err.print(f"[red]No Copilot session log or trajectory found in[/red] {pier_job}")
                 raise typer.Exit(1)
-            render_session_analysis(
-                analyze_events(load_events(events_path)), console, title=label, max_turns=max_turns
+            analysis = (
+                analyze_events(load_events(source_path))
+                if source_kind == "events"
+                else analyze_trajectory(read_json(source_path))
             )
+            render_session_analysis(analysis, console, title=label, max_turns=max_turns)
             return
     if run_dir is None:
         err.print("[red]Run not found.[/red] Pass a run id, --last, or --file.")
@@ -537,158 +534,6 @@ def reindex(
     layout = Layout(root)
     count = index_reindex(layout)
     console.print(f"[green]Reindexed {count} run(s)[/green] -> {layout.index_db}")
-
-
-@app.command(name="swebench-init")
-def swebench_init(
-    directory: Path | None = typer.Argument(
-        None, help="Experiment repository root (defaults to the current directory)."
-    ),
-    name: str = typer.Option("swebench", "--name", help="Experiment name."),
-    dataset: str = typer.Option(DEFAULT_DATASET, "--dataset", help="SWE-bench HF dataset name."),
-    split: str = typer.Option(DEFAULT_SPLIT, "--split", help="Dataset split."),
-    instances_file: Path | None = typer.Option(
-        None,
-        "--instances-file",
-        help="Local JSON/JSONL of instances to use instead of downloading from HF.",
-    ),
-    instance_id: list[str] = typer.Option(
-        None, "--instance-id", help="Select specific instance id(s); repeatable."
-    ),
-    limit: int | None = typer.Option(
-        3, "--limit", help="Keep only the first N instances (a smoke set). 0/none = all."
-    ),
-    model: list[str] = typer.Option(
-        None, "--model", help="Model variant(s) to compare; repeatable."
-    ),
-    effort: str | None = typer.Option(None, "--effort", help="Reasoning effort for all variants."),
-    trials: int = typer.Option(2, "--trials", help="Repeated runs per instance (the paper's N)."),
-    force: bool = typer.Option(
-        False, "--force", help="Overwrite an existing generated experiment."
-    ),
-) -> None:
-    """Materialize a SWE-bench subset as Pier tasks plus a Pier job config."""
-    root = Path(directory or Path.cwd())
-    models = model or ["claude-sonnet-4.5"]
-    effective_limit = limit if limit and limit > 0 else None
-    try:
-        records = load_instances(
-            dataset=dataset,
-            split=split,
-            instances_file=instances_file,
-            instance_ids=instance_id or None,
-            limit=effective_limit,
-        )
-    except SweBenchError as exc:
-        err.print(f"[red]error:[/red] {exc}")
-        raise typer.Exit(1) from exc
-    if not records:
-        err.print("[red]No instances selected.[/red]")
-        raise typer.Exit(1)
-
-    try:
-        materialized = materialize_pier_swebench(
-            root,
-            records,
-            name=name,
-            dataset=dataset,
-            models=models,
-            effort=effort,
-            trials=trials,
-            force=force,
-        )
-    except SweBenchError as exc:
-        err.print(f"[red]error:[/red] {exc}")
-        raise typer.Exit(1) from exc
-
-    console.print(
-        f"[green]Wrote {len(records)} instance(s)[/green] -> {materialized.instances_path}\n"
-        f"[green]Generated {len(materialized.task_dirs)} Pier task(s)[/green] -> {root / 'tasks'}\n"
-        f"[green]Generated Pier job[/green] -> {materialized.job_path}"
-    )
-    console.print("\nNext steps:")
-    console.print(f"  uv run copilot-experiments run --root {root} --dry-run")
-    console.print(f"  uv run copilot-experiments run --root {root}")
-
-
-@app.command(name="swebench-eval")
-def swebench_eval(
-    run_id: str | None = typer.Argument(None, help="Run id or unique prefix."),
-    last: bool = typer.Option(False, "--last", help="Grade the most recent run."),
-    root: Path | None = typer.Option(None, "--root", help="Experiment repository root."),
-    max_workers: int = typer.Option(
-        4, "--max-workers", help="Parallel containers for the swebench harness."
-    ),
-    run_id_prefix: str = typer.Option(
-        "copilot-exp", "--run-id-prefix", help="Prefix for the swebench evaluation run ids."
-    ),
-    verbose: bool = typer.Option(
-        False, "--verbose", "-v", help="Stream grading progress and harness output."
-    ),
-) -> None:
-    """Grade a finished run's SWE-bench trials with the official Docker harness.
-
-    Exports per-trial predictions, runs ``python -m swebench.harness.run_evaluation``
-    (needs Docker + the ``swebench`` package), writes resolved/unresolved back into each
-    trial, and re-aggregates ``summary.{json,md}`` and the SQLite index so resolved@k,
-    mean-success, and AIU-per-solve reflect ground-truth resolution.
-    """
-    root = Path(root or Path.cwd())
-    layout = Layout(root)
-    pier_job = _resolve_pier_job(layout, last=last, run_id=run_id)
-    run_dir = (
-        None
-        if last and pier_job is not None
-        else (layout.latest_run() if last else (layout.find_run(run_id) if run_id else None))
-    )
-    if run_dir is None:
-        if pier_job is None:
-            err.print("[red]Run not found.[/red] Pass a run id or --last.")
-            raise typer.Exit(1)
-        from .swebench import SwebenchDockerEvaluator
-
-        progress = _make_progress() if verbose else None
-        evaluator = SwebenchDockerEvaluator(max_workers=max_workers, stream=progress)
-        try:
-            report = grade_pier_job(
-                pier_job,
-                evaluator=evaluator,
-                run_id_prefix=run_id_prefix,
-                layout=layout,
-                progress=progress,
-            )
-        except SweBenchError as exc:
-            err.print(f"[red]error:[/red] {exc}")
-            raise typer.Exit(1) from exc
-
-        console.print(
-            f"[green]Graded {report.n_graded} Pier trial(s)[/green]: "
-            f"{report.n_resolved} resolved, {report.n_graded - report.n_resolved} unresolved."
-        )
-        console.print(f"[dim]{pier_job / 'summary.md'}[/dim]")
-        return
-
-    from .swebench import SwebenchDockerEvaluator
-
-    progress = _make_progress() if verbose else None
-    evaluator = SwebenchDockerEvaluator(max_workers=max_workers, stream=progress)
-    try:
-        report = grade_run(
-            run_dir,
-            evaluator=evaluator,
-            run_id_prefix=run_id_prefix,
-            layout=layout,
-            progress=progress,
-        )
-    except SweBenchError as exc:
-        err.print(f"[red]error:[/red] {exc}")
-        raise typer.Exit(1) from exc
-
-    console.print(
-        f"[green]Graded {report.n_graded} trial(s)[/green]: "
-        f"{report.n_resolved} resolved, {report.n_graded - report.n_resolved} unresolved."
-    )
-    console.print(f"[dim]{run_dir / 'summary.md'}[/dim]")
 
 
 # --------------------------------------------------------------------------- #
@@ -840,7 +685,7 @@ def _inspect_pier_job(job_dir: Path) -> None:
     table.add_column("trial")
     table.add_column("status")
     table.add_column("success")
-    table.add_column("events")
+    table.add_column("analysis")
     for trial_dir in sorted(
         path for path in job_dir.iterdir() if path.is_dir() and (path / "result.json").exists()
     ):
@@ -850,12 +695,14 @@ def _inspect_pier_job(job_dir: Path) -> None:
         success = "-"
         if rewards:
             success = "yes" if any(float(value) > 0 for value in rewards.values()) else "no"
-        events_path, _label = resolve_pier_trial_events(job_dir, trial_dir.name)
+        source_path, _label, source_kind = resolve_pier_trial_analysis_source(
+            job_dir, trial_dir.name
+        )
         table.add_row(
             trial_dir.name,
             "harness_error" if exception else "ok",
             success,
-            "yes" if events_path else "no",
+            source_kind or ("yes" if source_path else "no"),
         )
     console.print(table)
 

@@ -40,3 +40,24 @@ def test_copilot_cli_version_parser(tmp_path: Path):
 
     assert agent.parse_version("GitHub Copilot CLI 1.0.64-0\n") == "1.0.64"
     assert agent.parse_version("dev-build") == "dev-build"
+
+
+def test_copilot_cli_run_command_copies_native_session_state(tmp_path: Path):
+    agent = CopilotCli(logs_dir=tmp_path)
+
+    command = agent._build_run_command(
+        setup="mkdir -p /logs/agent /logs/agent/copilot-session",
+        instruction="fix it",
+        flag_text="--session-id 1234 --log-dir /logs/agent/copilot-session",
+        session_id="1234",
+        session_root="/logs/agent/copilot-session",
+        jsonl_path="/logs/agent/copilot-cli.jsonl",
+        output_path="/logs/agent/copilot-cli.txt",
+    )
+
+    assert "bash -lc" in command
+    assert "set -o pipefail" in command
+    assert "status=${PIPESTATUS[0]}" in command
+    assert 'session_state="$HOME/.copilot/session-state/1234"' in command
+    assert 'cp -a "$session_state" /logs/agent/copilot-session' in command
+    assert "exit $status" in command

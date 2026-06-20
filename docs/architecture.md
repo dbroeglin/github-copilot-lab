@@ -13,7 +13,8 @@ flowchart TD
     JOB --> ENV["Pier environment\nDocker / Modal / Daytona"]
     JOB --> AGENT["installed agent\ncopilot-cli or another Pier agent"]
     AGENT --> CLI["real copilot CLI\n-p --output-format json --session-id --log-dir"]
-    CLI --> EVENTS["/logs/agent/copilot-session/**/events.jsonl"]
+    CLI --> STATE["~/.copilot/session-state/<id>/events.jsonl"]
+    STATE --> EVENTS["/logs/agent/copilot-session/<id>/events.jsonl"]
     AGENT --> ATIF["/logs/agent/trajectory.json"]
     JOB --> VERIFY["Pier verifier\ntests/test.sh -> reward.txt/json"]
     JOB --> OUT["jobs/<job>/<trial>/"]
@@ -60,6 +61,8 @@ During normalization, `name: copilot-cli` becomes
 - allowlists GitHub/Copilot domains for Pier network policy;
 - runs `copilot -p <instruction> --output-format json --session-id <uuid> --log-dir
   /logs/agent/copilot-session`;
+- copies `~/.copilot/session-state/<uuid>/` into `/logs/agent/copilot-session/<uuid>/` so the
+  native `events.jsonl` is persisted with the Pier trial;
 - supports model, effort, mode, context tier, MCP config, skills, and extra CLI args through Pier
   agent kwargs;
 - writes raw CLI JSONL/text, ATIF `trajectory.json`, and native Copilot session logs.

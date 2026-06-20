@@ -197,8 +197,6 @@ def _run_task(
         task_slug=task_slug,
         task_name=task.name,
         prompt=task.prompt,
-        instance_id=task.swebench.instance_id if task.swebench else None,
-        difficulty=task.swebench.difficulty if task.swebench else None,
     )
     for trial_no in range(1, variant.trials + 1):
         tr.trials.append(

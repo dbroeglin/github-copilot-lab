@@ -47,8 +47,6 @@ CREATE TABLE IF NOT EXISTS tasks (
     variant_slug  TEXT,
     task_slug     TEXT,
     task_name     TEXT,
-    instance_id   TEXT,
-    difficulty    TEXT,
     n_trials      INTEGER,
     success_rate  REAL,
     resolved      INTEGER
@@ -119,20 +117,11 @@ _TRIAL_MIGRATIONS = {
     "error": "ALTER TABLE trials ADD COLUMN error TEXT",
 }
 
-_TASK_MIGRATIONS = {
-    "instance_id": "ALTER TABLE tasks ADD COLUMN instance_id TEXT",
-    "difficulty": "ALTER TABLE tasks ADD COLUMN difficulty TEXT",
-}
-
 
 def _migrate(conn: sqlite3.Connection) -> None:
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(trials)")}
     for column, ddl in _TRIAL_MIGRATIONS.items():
         if column not in existing:
-            conn.execute(ddl)
-    existing_tasks = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
-    for column, ddl in _TASK_MIGRATIONS.items():
-        if column not in existing_tasks:
             conn.execute(ddl)
 
 
@@ -203,15 +192,13 @@ def index_run_dir(conn: sqlite3.Connection, run_dir: Path) -> None:
             graded = [t for t in trials if t.get("success") is not None]
             n_solved = sum(1 for t in graded if t.get("success"))
             conn.execute(
-                "INSERT INTO tasks(run_id, variant_slug, task_slug, task_name, instance_id, "
-                "difficulty, n_trials, success_rate, resolved) VALUES (?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO tasks(run_id, variant_slug, task_slug, task_name, n_trials, "
+                "success_rate, resolved) VALUES (?,?,?,?,?,?,?)",
                 (
                     run_id,
                     vslug,
                     task_slug,
                     tr.get("task_name"),
-                    tr.get("instance_id"),
-                    tr.get("difficulty"),
                     len(trials),
                     (n_solved / len(graded)) if graded else None,
                     None if not graded else int(any(t.get("success") for t in graded)),

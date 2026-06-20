@@ -37,7 +37,7 @@ temporary uv source override to an editable sibling checkout.
 - `--dry-run` for Pier validates job configs; offline unit tests use fixture job directories rather
   than real Docker/Copilot.
 - Results tooling must read both new Pier `jobs/` and old `results/` until migration is complete.
-- SWE-bench support should move from Python `Task` generation to Pier task materialization.
+- Large SWE-style benchmark protocols should be handled by DeepSWE rather than this package.
 - Contributing the `copilot-cli` installed agent upstream to Pier is now straightforward because it
   follows Pier's `BaseInstalledAgent` interface.
 
@@ -50,4 +50,5 @@ temporary uv source override to an editable sibling checkout.
 - Supersedes ADR-0009 for Pier runs: Pier controls the sandbox cwd; the Copilot agent still passes
   explicit session/log paths.
 - Supersedes ADR-0012: Pier's `agents x tasks x n_attempts` is the primary matrix.
-- Narrows ADR-0014: SWE-bench should now be expressed through Pier tasks/verifiers.
+- Superseded by ADR-0016 for large benchmark protocols: DeepSWE is the benchmark path, not in-tree
+  benchmark support.

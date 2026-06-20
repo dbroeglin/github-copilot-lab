@@ -15,16 +15,6 @@ dependencies = [
     "rich>=13.7",
 ]
 
-[project.optional-dependencies]
-# SWE-bench support. `datasets` is only needed to download instances in
-# `swebench-init`; `swebench` (+ Docker) is only needed to grade with `swebench-eval`.
-# Both are optional — the core install, the offline example, and the test suite never
-# require them. See docs/swebench.md.
-swebench = [
-    "datasets>=2.18",
-    "swebench>=2.1",
-]
-
 [project.scripts]
 copilot-experiments = "copilot_experiments.cli:app"
 
