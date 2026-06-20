@@ -1,6 +1,26 @@
 """Filesystem layout for experiment results.
 
-Layout (inside an experiment repository)::
+The Pier refactor makes ``jobs/`` the primary execution output. The previous
+``results/`` tree is still supported for legacy Python experiments and for the
+derived SQLite index.
+
+Pier layout (inside an experiment repository)::
+
+    jobs/
+      <job-name>/
+        config.json
+        result.json
+        <trial-name>/
+          config.json
+          result.json
+          agent/
+            trajectory.json
+            copilot-cli.jsonl
+            copilot-session/**/events.jsonl
+          verifier/
+          artifacts/
+
+Legacy layout (inside an experiment repository)::
 
     results/
       index.db                                  # SQLite cross-run index
@@ -26,7 +46,6 @@ Layout (inside an experiment repository)::
                       analysis.json             # richer session analysis
                       workspace.diff            # git diff of the workspace
                       verify.json               # verification result (if any)
-                      swebench.json             # SWE-bench resolution verdict (if graded)
                       workspace/                # the trial's working directory
 """
 
@@ -51,6 +70,10 @@ class Layout:
     @property
     def results_dir(self) -> Path:
         return self._results_root if self._results_root is not None else self.root / "results"
+
+    @property
+    def jobs_dir(self) -> Path:
+        return self.root / "jobs"
 
     @property
     def index_db(self) -> Path:
@@ -111,3 +134,33 @@ class Layout:
     def latest_run(self) -> Path | None:
         runs = self.iter_runs()
         return runs[-1][2] if runs else None
+
+    # --- Pier discovery helpers ------------------------------------------- #
+    def iter_pier_jobs(self) -> list[Path]:
+        """Yield Pier job directories under ``jobs/``.
+
+        A Pier job directory is identified by the stable pair ``config.json`` and
+        ``result.json``. The SQLite index remains under ``results/`` because it is
+        a derived cache owned by this project, not by Pier.
+        """
+
+        if not self.jobs_dir.exists():
+            return []
+        return sorted(
+            path
+            for path in self.jobs_dir.iterdir()
+            if path.is_dir() and (path / "config.json").exists() and (path / "result.json").exists()
+        )
+
+    def find_pier_job(self, job_name: str) -> Path | None:
+        """Locate a Pier job by exact name or unique prefix."""
+
+        matches = [path for path in self.iter_pier_jobs() if path.name == job_name]
+        if matches:
+            return matches[0]
+        prefix = [path for path in self.iter_pier_jobs() if path.name.startswith(job_name)]
+        return prefix[0] if len(prefix) == 1 else None
+
+    def latest_pier_job(self) -> Path | None:
+        jobs = self.iter_pier_jobs()
+        return jobs[-1] if jobs else None

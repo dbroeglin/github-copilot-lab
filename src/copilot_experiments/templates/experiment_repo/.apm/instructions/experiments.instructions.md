@@ -5,12 +5,15 @@ applyTo: "**"
 
 # Working in this experiment repository
 
-- Experiments are Python objects in `experiments/*.py` built from `copilot_experiments`.
-- A starting workspace lives under `fixtures/<name>/` and is copied fresh for every trial.
-- Generated data lives under `results/` and must not be edited by hand.
+- Experiments are Pier `JobConfig` YAML files in `experiments/*.yaml`.
+- Tasks live under `tasks/<name>/` as Harbor/Pier task directories.
+- Generated Pier job data lives under `jobs/` and must not be edited by hand.
+- Derived query data lives under `results/index.db` and can be rebuilt.
 
 When adding an experiment:
-1. Create a deterministic, self-contained fixture under `fixtures/`.
-2. Define a `Task` (prompt, `fixture`, optional `setup`, `verify`) and a list of `Variant`s.
-3. Prefer a `verify` shell command that exits non-zero on failure (e.g. a test run).
-4. Validate the pipeline with `copilot-experiments run --dry-run` before a real run.
+1. Create a deterministic task directory under `tasks/`.
+2. Write `instruction.md`, `task.toml`, `environment/`, and `tests/test.sh`.
+3. Define or update a Pier job YAML in `experiments/`.
+4. Use the local Copilot agent import path:
+   `copilot_experiments.pier_agents.copilot_cli:CopilotCli`.
+5. Validate configs with `copilot-experiments run --dry-run` before a real run.

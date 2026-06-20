@@ -1,8 +1,17 @@
 # 0014. SWE-bench as a task source with decoupled Docker grading
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0016](0016-use-deepswe-for-large-benchmark-protocols.md)
 - **Date:** 2026-06-18
 - **Deciders:** project owner, Copilot
+
+> **Amendment (ADR-0015):** SWE-bench support should now materialize Pier task directories and
+> use Pier verifier/artifact flows where possible. The host-side Python task source is legacy
+> migration scaffolding.
+>
+> **Amendment (ADR-0016):** In-tree SWE-bench loading, prediction export, Docker grading, examples,
+> commands, and optional dependencies were removed. Large SWE-style benchmark protocols should use
+> DeepSWE; this project should focus on Pier task/job authoring and native Copilot CLI session
+> capture.
 
 ## Context
 

@@ -38,9 +38,12 @@ def _compaction_event() -> dict:
                 "copilotUsage": {
                     "totalNanoAiu": 2_000_000,
                     "tokenDetails": [
-                        {"tokenType": t, "tokenCount": 10,
-                         "batchSize": 1_000_000,
-                         "costPerBatch": pricing.DEFAULT_COST_PER_BATCH[t]}
+                        {
+                            "tokenType": t,
+                            "tokenCount": 10,
+                            "batchSize": 1_000_000,
+                            "costPerBatch": pricing.DEFAULT_COST_PER_BATCH[t],
+                        }
                         for t in pricing.TOKEN_TYPES
                     ],
                 }
@@ -84,25 +87,58 @@ def _shutdown_event(**overrides: object) -> dict:
 
 def _session(*, with_shutdown: bool = True) -> list[dict]:
     events = [
-        {"type": "session.start", "timestamp": "2026-01-01T00:00:00.000Z",
-         "data": {"sessionId": "s1", "selectedModel": "claude-opus-4.8"}},
-        {"type": "user.message", "timestamp": "2026-01-01T00:00:00.500Z",
-         "data": {"content": "go"}},
-        {"type": "assistant.turn_start", "timestamp": "2026-01-01T00:00:01.000Z",
-         "data": {"turnId": "0"}},
-        {"type": "assistant.message", "timestamp": "2026-01-01T00:00:01.200Z",
-         "data": {"model": "claude-opus-4.8", "content": "reading", "outputTokens": 100,
-                  "toolRequests": [{"toolCallId": "c1", "name": "view"}]}},
-        {"type": "tool.execution_start", "timestamp": "2026-01-01T00:00:01.300Z",
-         "data": {"toolCallId": "c1", "toolName": "view"}},
-        {"type": "tool.execution_complete", "timestamp": "2026-01-01T00:00:01.500Z",
-         "data": {"toolCallId": "c1", "success": True,
-                  "toolTelemetry": {"metrics": {"durationMs": 120, "resultForLlmLength": 500}}}},
-        {"type": "assistant.turn_end", "timestamp": "2026-01-01T00:00:02.000Z",
-         "data": {"turnId": "0"}},
-        {"type": "session.truncation", "timestamp": "2026-01-01T00:00:04.000Z",
-         "data": {"preTruncationTokensInMessages": 120_000,
-                  "tokensRemovedDuringTruncation": 1500}},
+        {
+            "type": "session.start",
+            "timestamp": "2026-01-01T00:00:00.000Z",
+            "data": {"sessionId": "s1", "selectedModel": "claude-opus-4.8"},
+        },
+        {
+            "type": "user.message",
+            "timestamp": "2026-01-01T00:00:00.500Z",
+            "data": {"content": "go"},
+        },
+        {
+            "type": "assistant.turn_start",
+            "timestamp": "2026-01-01T00:00:01.000Z",
+            "data": {"turnId": "0"},
+        },
+        {
+            "type": "assistant.message",
+            "timestamp": "2026-01-01T00:00:01.200Z",
+            "data": {
+                "model": "claude-opus-4.8",
+                "content": "reading",
+                "outputTokens": 100,
+                "toolRequests": [{"toolCallId": "c1", "name": "view"}],
+            },
+        },
+        {
+            "type": "tool.execution_start",
+            "timestamp": "2026-01-01T00:00:01.300Z",
+            "data": {"toolCallId": "c1", "toolName": "view"},
+        },
+        {
+            "type": "tool.execution_complete",
+            "timestamp": "2026-01-01T00:00:01.500Z",
+            "data": {
+                "toolCallId": "c1",
+                "success": True,
+                "toolTelemetry": {"metrics": {"durationMs": 120, "resultForLlmLength": 500}},
+            },
+        },
+        {
+            "type": "assistant.turn_end",
+            "timestamp": "2026-01-01T00:00:02.000Z",
+            "data": {"turnId": "0"},
+        },
+        {
+            "type": "session.truncation",
+            "timestamp": "2026-01-01T00:00:04.000Z",
+            "data": {
+                "preTruncationTokensInMessages": 120_000,
+                "tokensRemovedDuringTruncation": 1500,
+            },
+        },
         _compaction_event(),
     ]
     if with_shutdown:
@@ -130,8 +166,12 @@ def test_rates_from_compaction_returns_none_when_absent():
 
 
 def test_aiu_by_type_splits_and_normalizes():
-    counts = {"input": _INPUT, "cache_read": _CACHE_READ,
-              "cache_write": _CACHE_WRITE, "output": _OUTPUT}
+    counts = {
+        "input": _INPUT,
+        "cache_read": _CACHE_READ,
+        "cache_write": _CACHE_WRITE,
+        "output": _OUTPUT,
+    }
     split = pricing.aiu_by_type(counts, normalize_to_nano=_NANO)
     assert split == {"input": 0.3, "cache_read": 0.24, "cache_write": 0.45, "output": 0.225}
     assert round(sum(split.values()), 6) == 1.215
@@ -247,8 +287,12 @@ def _variant_result(aius: list[float], successes: list[bool | None]) -> VariantR
             exit_code=0,
             duration_s=1.0,
             success=successes[i],
-            metrics=Metrics(aiu=aius[i], total_tokens=int(aius[i] * 1000),
-                            lines_added=10, cache_read_tokens=8000),
+            metrics=Metrics(
+                aiu=aius[i],
+                total_tokens=int(aius[i] * 1000),
+                lines_added=10,
+                cache_read_tokens=8000,
+            ),
         )
         for i in range(len(aius))
     ]

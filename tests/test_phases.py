@@ -15,29 +15,56 @@ def _turn_events(turn_no: int, *, out: int, tools: int) -> list[dict]:
     base = f"2026-01-01T00:00:{turn_no:02d}"
     requests = [{"toolCallId": f"c{turn_no}-{i}", "name": "view"} for i in range(tools)]
     events: list[dict] = [
-        {"type": "assistant.turn_start", "timestamp": f"{base}.000Z",
-         "data": {"turnId": str(turn_no)}},
-        {"type": "assistant.message", "timestamp": f"{base}.100Z", "data": {
-            "model": "m", "content": "", "outputTokens": out, "toolRequests": requests}},
+        {
+            "type": "assistant.turn_start",
+            "timestamp": f"{base}.000Z",
+            "data": {"turnId": str(turn_no)},
+        },
+        {
+            "type": "assistant.message",
+            "timestamp": f"{base}.100Z",
+            "data": {"model": "m", "content": "", "outputTokens": out, "toolRequests": requests},
+        },
     ]
     for i in range(tools):
         cid = f"c{turn_no}-{i}"
-        events.append({"type": "tool.execution_start", "timestamp": f"{base}.200Z",
-                       "data": {"toolCallId": cid, "toolName": "view", "turnId": str(turn_no)}})
-        events.append({"type": "tool.execution_complete", "timestamp": f"{base}.300Z",
-                       "data": {"toolCallId": cid, "success": True}})
-    events.append({"type": "assistant.turn_end", "timestamp": f"{base}.500Z",
-                   "data": {"turnId": str(turn_no)}})
+        events.append(
+            {
+                "type": "tool.execution_start",
+                "timestamp": f"{base}.200Z",
+                "data": {"toolCallId": cid, "toolName": "view", "turnId": str(turn_no)},
+            }
+        )
+        events.append(
+            {
+                "type": "tool.execution_complete",
+                "timestamp": f"{base}.300Z",
+                "data": {"toolCallId": cid, "success": True},
+            }
+        )
+    events.append(
+        {
+            "type": "assistant.turn_end",
+            "timestamp": f"{base}.500Z",
+            "data": {"turnId": str(turn_no)},
+        }
+    )
     return events
 
 
 def _session(specs: list[tuple[int, int]]) -> list[dict]:
     """Build a session from ``(output_tokens, n_tools)`` specs, one per turn."""
     events: list[dict] = [
-        {"type": "session.start", "timestamp": "2026-01-01T00:00:00.000Z",
-         "data": {"sessionId": "s", "selectedModel": "m"}},
-        {"type": "user.message", "timestamp": "2026-01-01T00:00:00.500Z",
-         "data": {"content": "go"}},
+        {
+            "type": "session.start",
+            "timestamp": "2026-01-01T00:00:00.000Z",
+            "data": {"sessionId": "s", "selectedModel": "m"},
+        },
+        {
+            "type": "user.message",
+            "timestamp": "2026-01-01T00:00:00.500Z",
+            "data": {"content": "go"},
+        },
     ]
     for i, (out, tools) in enumerate(specs, start=1):
         events.extend(_turn_events(i, out=out, tools=tools))
@@ -66,17 +93,20 @@ def test_short_session_has_no_phases():
 def test_ten_turn_session_phase_distribution():
     # Tool-heavy + low output early; generation-heavy late (Finding #6 shape).
     specs = [
-        (10, 2), (20, 2),   # early
-        (30, 1), (40, 1),   # early_mid
-        (50, 0), (60, 0),   # mid
-        (70, 0), (80, 0),   # later_mid
-        (90, 0), (100, 0),  # later
+        (10, 2),
+        (20, 2),  # early
+        (30, 1),
+        (40, 1),  # early_mid
+        (50, 0),
+        (60, 0),  # mid
+        (70, 0),
+        (80, 0),  # later_mid
+        (90, 0),
+        (100, 0),  # later
     ]
     a = analyze_events(_session(specs))
 
-    assert [p.name for p in a.phases] == [
-        "early", "early_mid", "mid", "later_mid", "later"
-    ]
+    assert [p.name for p in a.phases] == ["early", "early_mid", "mid", "later_mid", "later"]
     assert all(p.n_turns == 2 for p in a.phases)
     assert a.phases[0].turn_from == 1 and a.phases[0].turn_to == 2
     assert a.phases[-1].turn_from == 9 and a.phases[-1].turn_to == 10

@@ -23,17 +23,17 @@ def slugify(value: str) -> str:
 
 
 def utcnow() -> _dt.datetime:
-    return _dt.datetime.now(_dt.timezone.utc)
+    return _dt.datetime.now(_dt.UTC)
 
 
 def iso(ts: _dt.datetime) -> str:
-    return ts.astimezone(_dt.timezone.utc).isoformat().replace("+00:00", "Z")
+    return ts.astimezone(_dt.UTC).isoformat().replace("+00:00", "Z")
 
 
 def new_run_id(now: _dt.datetime | None = None) -> str:
     """Generate a sortable run id: ``20260612T103300Z_a1b2c3``."""
     now = now or utcnow()
-    stamp = now.astimezone(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = now.astimezone(_dt.UTC).strftime("%Y%m%dT%H%M%SZ")
     return f"{stamp}_{uuid.uuid4().hex[:6]}"
 
 

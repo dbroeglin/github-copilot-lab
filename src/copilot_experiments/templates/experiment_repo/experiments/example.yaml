@@ -1,0 +1,17 @@
+job_name: example-fix-bug
+jobs_dir: jobs
+n_attempts: 1
+n_concurrent_trials: 1
+
+agents:
+  - name: copilot-cli
+    model_name: claude-opus-4.7
+    kwargs:
+      reasoning_effort: medium
+
+tasks:
+  - path: ../tasks/example-fix-bug
+
+artifacts:
+  - source: /app/calculator.py
+    destination: calculator.py

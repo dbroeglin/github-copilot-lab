@@ -11,6 +11,7 @@ import sqlite3
 from pathlib import Path
 
 from ._util import read_json
+from .pier_results import build_pier_summary, iter_pier_trial_summaries
 from .storage import Layout
 
 SCHEMA = """
@@ -46,8 +47,6 @@ CREATE TABLE IF NOT EXISTS tasks (
     variant_slug  TEXT,
     task_slug     TEXT,
     task_name     TEXT,
-    instance_id   TEXT,
-    difficulty    TEXT,
     n_trials      INTEGER,
     success_rate  REAL,
     resolved      INTEGER
@@ -85,6 +84,30 @@ CREATE TABLE IF NOT EXISTS trials (
     status          TEXT,
     error           TEXT
 );
+CREATE TABLE IF NOT EXISTS pier_jobs (
+    job_name       TEXT PRIMARY KEY,
+    job_dir        TEXT,
+    started_at     TEXT,
+    finished_at    TEXT,
+    n_trials       INTEGER,
+    success_rate   REAL,
+    status         TEXT
+);
+CREATE TABLE IF NOT EXISTS pier_trials (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_name       TEXT,
+    variant_slug   TEXT,
+    task_slug      TEXT,
+    trial_name     TEXT,
+    success        INTEGER,
+    status         TEXT,
+    n_turns        INTEGER,
+    n_tool_calls   INTEGER,
+    total_tokens   INTEGER,
+    aiu            REAL,
+    model          TEXT,
+    error          TEXT
+);
 """
 
 # Columns added after the initial schema. ``connect`` ALTERs any that a pre-existing
@@ -94,20 +117,11 @@ _TRIAL_MIGRATIONS = {
     "error": "ALTER TABLE trials ADD COLUMN error TEXT",
 }
 
-_TASK_MIGRATIONS = {
-    "instance_id": "ALTER TABLE tasks ADD COLUMN instance_id TEXT",
-    "difficulty": "ALTER TABLE tasks ADD COLUMN difficulty TEXT",
-}
-
 
 def _migrate(conn: sqlite3.Connection) -> None:
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(trials)")}
     for column, ddl in _TRIAL_MIGRATIONS.items():
         if column not in existing:
-            conn.execute(ddl)
-    existing_tasks = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
-    for column, ddl in _TASK_MIGRATIONS.items():
-        if column not in existing_tasks:
             conn.execute(ddl)
 
 
@@ -178,15 +192,13 @@ def index_run_dir(conn: sqlite3.Connection, run_dir: Path) -> None:
             graded = [t for t in trials if t.get("success") is not None]
             n_solved = sum(1 for t in graded if t.get("success"))
             conn.execute(
-                "INSERT INTO tasks(run_id, variant_slug, task_slug, task_name, instance_id, "
-                "difficulty, n_trials, success_rate, resolved) VALUES (?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO tasks(run_id, variant_slug, task_slug, task_name, n_trials, "
+                "success_rate, resolved) VALUES (?,?,?,?,?,?,?)",
                 (
                     run_id,
                     vslug,
                     task_slug,
                     tr.get("task_name"),
-                    tr.get("instance_id"),
-                    tr.get("difficulty"),
                     len(trials),
                     (n_solved / len(graded)) if graded else None,
                     None if not graded else int(any(t.get("success") for t in graded)),
@@ -240,8 +252,54 @@ def index_run_dir(conn: sqlite3.Connection, run_dir: Path) -> None:
     conn.commit()
 
 
+def index_pier_job_dir(conn: sqlite3.Connection, job_dir: Path) -> None:
+    """Insert (or replace) one Pier job into the derived index."""
+
+    summary = build_pier_summary(job_dir)
+    job_name = job_dir.name
+    conn.execute("DELETE FROM pier_jobs WHERE job_name=?", (job_name,))
+    conn.execute("DELETE FROM pier_trials WHERE job_name=?", (job_name,))
+
+    conn.execute(
+        "INSERT INTO pier_jobs(job_name, job_dir, started_at, finished_at, n_trials, "
+        "success_rate, status) VALUES (?,?,?,?,?,?,?)",
+        (
+            job_name,
+            str(job_dir),
+            summary.get("started_at"),
+            summary.get("finished_at"),
+            summary.get("n_trials"),
+            summary.get("overall_success_rate"),
+            summary.get("status"),
+        ),
+    )
+
+    for trial in iter_pier_trial_summaries(job_dir):
+        metrics = trial.get("metrics") or {}
+        conn.execute(
+            "INSERT INTO pier_trials(job_name, variant_slug, task_slug, trial_name, "
+            "success, status, n_turns, n_tool_calls, total_tokens, aiu, model, error) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                job_name,
+                trial.get("variant"),
+                trial.get("task"),
+                trial.get("trial_name"),
+                None if trial.get("success") is None else int(bool(trial.get("success"))),
+                trial.get("status"),
+                metrics.get("n_turns"),
+                metrics.get("n_tool_calls"),
+                metrics.get("total_tokens"),
+                metrics.get("aiu"),
+                trial.get("model"),
+                trial.get("error"),
+            ),
+        )
+    conn.commit()
+
+
 def reindex(layout: Layout) -> int:
-    """Rebuild the index from scratch by scanning ``results/``. Returns run count."""
+    """Rebuild the index from scratch by scanning legacy runs and Pier jobs."""
     if layout.index_db.exists():
         layout.index_db.unlink()
     conn = connect(layout.index_db)
@@ -249,6 +307,9 @@ def reindex(layout: Layout) -> int:
     try:
         for _slug, _run_id, run_dir in layout.iter_runs():
             index_run_dir(conn, run_dir)
+            count += 1
+        for job_dir in layout.iter_pier_jobs():
+            index_pier_job_dir(conn, job_dir)
             count += 1
     finally:
         conn.close()

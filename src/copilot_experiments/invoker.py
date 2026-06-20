@@ -288,33 +288,61 @@ class MockInvoker:
             if tool == "powershell":
                 tele_metrics["exit_code"] = 0 if ok else 1
             events += [
-                {"type": "assistant.turn_start", "timestamp": at(),
-                 "data": {"turnId": str(i)}},
-                {"type": "assistant.message", "timestamp": at(),
-                 "data": {"model": model, "content": text, "turnId": str(i),
-                          "outputTokens": out_tok,
-                          "toolRequests": [{"toolCallId": call_id, "name": tool}]}},
-                {"type": "tool.execution_start", "timestamp": at(),
-                 "data": {"toolCallId": call_id, "toolName": tool, "model": model,
-                          "turnId": str(i)}},
-                {"type": "tool.execution_complete", "timestamp": at(),
-                 "data": {"toolCallId": call_id, "turnId": str(i), "success": ok,
-                          "toolTelemetry": {"metrics": tele_metrics}}},
-                {"type": "assistant.turn_end", "timestamp": at(),
-                 "data": {"turnId": str(i)}},
+                {"type": "assistant.turn_start", "timestamp": at(), "data": {"turnId": str(i)}},
+                {
+                    "type": "assistant.message",
+                    "timestamp": at(),
+                    "data": {
+                        "model": model,
+                        "content": text,
+                        "turnId": str(i),
+                        "outputTokens": out_tok,
+                        "toolRequests": [{"toolCallId": call_id, "name": tool}],
+                    },
+                },
+                {
+                    "type": "tool.execution_start",
+                    "timestamp": at(),
+                    "data": {
+                        "toolCallId": call_id,
+                        "toolName": tool,
+                        "model": model,
+                        "turnId": str(i),
+                    },
+                },
+                {
+                    "type": "tool.execution_complete",
+                    "timestamp": at(),
+                    "data": {
+                        "toolCallId": call_id,
+                        "turnId": str(i),
+                        "success": ok,
+                        "toolTelemetry": {"metrics": tele_metrics},
+                    },
+                },
+                {"type": "assistant.turn_end", "timestamp": at(), "data": {"turnId": str(i)}},
             ]
 
         # A closing turn with a final message and no tool call.
         final_turn = len(script)
         out_total += 25
         events += [
-            {"type": "assistant.turn_start", "timestamp": at(),
-             "data": {"turnId": str(final_turn)}},
-            {"type": "assistant.message", "timestamp": at(),
-             "data": {"model": model, "turnId": str(final_turn), "outputTokens": 25,
-                      "content": f"(mock) Completed the task for variant '{inv.variant.name}'."}},
-            {"type": "assistant.turn_end", "timestamp": at(),
-             "data": {"turnId": str(final_turn)}},
+            {
+                "type": "assistant.turn_start",
+                "timestamp": at(),
+                "data": {"turnId": str(final_turn)},
+            },
+            {
+                "type": "assistant.message",
+                "timestamp": at(),
+                "data": {
+                    "model": model,
+                    "turnId": str(final_turn),
+                    "outputTokens": 25,
+                    "content": f"(mock) Completed the task for variant '{inv.variant.name}'.",
+                },
+            },
+            {"type": "assistant.turn_end", "timestamp": at(), "data": {"turnId": str(final_turn)}},
         ]
 
         events += self._economics_events(model, at, out_total, lines_added, lines_removed)

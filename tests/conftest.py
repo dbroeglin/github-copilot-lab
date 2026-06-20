@@ -12,10 +12,7 @@ from copilot_experiments import Experiment, Task, Variant
 FIXTURES = Path(__file__).parent / "fixtures"
 
 # A portable verify command: succeeds only when a SOLVED marker exists.
-_VERIFY = (
-    f'"{sys.executable}" -c '
-    '"import os,sys; sys.exit(0 if os.path.exists(\'SOLVED\') else 1)"'
-)
+_VERIFY = f'"{sys.executable}" -c "import os,sys; sys.exit(0 if os.path.exists(\'SOLVED\') else 1)"'
 
 
 @pytest.fixture

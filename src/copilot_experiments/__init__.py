@@ -2,22 +2,12 @@
 
 Public API
 ----------
-Define experiments in Python and run them across a parameter matrix (models,
-reasoning efforts, agents, or BYOK providers), then collect and analyze the
-resulting Copilot CLI session logs.
+Author Pier/Harbor task directories and run Pier jobs that include the real
+GitHub Copilot CLI as an installed agent. The legacy Python experiment API is
+still exported for migration and offline tests.
 
-Example
--------
->>> from copilot_experiments import Experiment, Variant, Task
->>> exp = Experiment(
-...     name="Fix the bug",
-...     task=Task(prompt="Fix the failing test", fixture="fixtures/buggy_calculator",
-...               verify="python -m pytest -q"),
-...     variants=[
-...         Variant(name="opus", model="claude-opus-4.7"),
-...         Variant(name="gpt", model="gpt-5.2"),
-...     ],
-... )
+Pier configs can refer to the local Copilot agent import path exported as
+``COPILOT_CLI_AGENT_IMPORT_PATH``.
 """
 
 from __future__ import annotations
@@ -31,7 +21,6 @@ from .models import (
     Metrics,
     ProviderConfig,
     SessionAnalysis,
-    SweBenchInstance,
     Task,
     TaskResult,
     ToolStat,
@@ -40,6 +29,7 @@ from .models import (
     Variant,
     VariantResult,
 )
+from .pier_backend import COPILOT_CLI_AGENT_IMPORT_PATH, discover_pier_job_configs, run_pier_job
 from .runner import dry_run_experiment, run_experiment
 
 __all__ = [
@@ -50,7 +40,6 @@ __all__ = [
     "Metrics",
     "ProviderConfig",
     "SessionAnalysis",
-    "SweBenchInstance",
     "Task",
     "TaskResult",
     "ToolStat",
@@ -58,8 +47,11 @@ __all__ = [
     "TurnSummary",
     "Variant",
     "VariantResult",
+    "COPILOT_CLI_AGENT_IMPORT_PATH",
     "analyze_events",
+    "discover_pier_job_configs",
     "dry_run_experiment",
+    "run_pier_job",
     "run_experiment",
     "run",
 ]
@@ -67,4 +59,4 @@ __all__ = [
 # Convenient alias.
 run = run_experiment
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

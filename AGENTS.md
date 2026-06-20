@@ -35,19 +35,13 @@ plus a [Typer](https://typer.tiangolo.com/) CLI. It is developed with [`uv`](htt
     `dry_run_experiment()` (ephemeral, validating plumbing check that persists nothing).
   - `storage.py` — the `results/` filesystem `Layout` and run discovery.
   - `index.py` — the SQLite index (`results/index.db`) derived from the filesystem.
-  - `report.py` — aggregation, `summary.json`, and `summary.md` (incl. difficulty-vs-cost).
+  - `report.py` — aggregation, `summary.json`, and `summary.md`.
   - `scaffold.py` — `init` logic: render `templates/experiment_repo/` into a new repo.
-  - `swebench.py` — SWE-bench integration: load instances → `Task`s, export `predictions.jsonl`
-    from captured diffs, and grade resolution with the official `swebench` Docker harness
-    (optional `datasets`/`swebench` deps; pluggable `Evaluator` so tests stay offline). See ADR-0014.
-  - `cli.py` — the Typer app (`init`, `run`, `list`, `show`, `analyze`, `inspect`, `reindex`,
-    `swebench-init`, `swebench-eval`).
+  - `cli.py` — the Typer app (`init`, `run`, `list`, `show`, `analyze`, `inspect`, `reindex`).
   - `templates/experiment_repo/` — package-data template for scaffolded experiment repos.
 - `examples/tracer_bullet/` — a committed, runnable multi-turn example experiment (textstats).
 - `examples/task_suite/` — a committed multi-task example (strtools + csvtools) exercising the
   task axis and its mean-success / resolved@k suite-coverage metrics.
-- `examples/swebench/` — a committed, offline-runnable SWE-bench protocol example (local fixtures
-  carrying SWE-bench metadata) plus a sample `instances.json` and the real-protocol README.
 - `sandbox/` — local scratch space for exercising the lib/CLI (its `results/` are gitignored).
 - `tests/` — pytest suite (uses `MockInvoker`; **never** requires a real `copilot` or network).
 - `docs/` — architecture, authoring guide, analysis (`analyze`), results-format reference,
@@ -77,8 +71,9 @@ plus a [Typer](https://typer.tiangolo.com/) CLI. It is developed with [`uv`](htt
 ## Workflow
 ```bash
 uv sync                              # create/refresh the venv
-uv run ruff check .                  # lint
-uv run ruff check --fix .            # autofix
+uv run ruff check --fix .            # autofix lint issues
+uv run ruff format .                 # format Python code
+uv run ruff check .                  # verify lint
 uv run pytest -q                     # test
 # End-to-end smoke test against the sandbox:
 uv run copilot-experiments init sandbox/demo --force
@@ -89,7 +84,14 @@ For local CLI testing point `--root` at a scaffolded dir in `sandbox/` rather th
 that dir (its `pyproject` depends on this package via a git URL that won't resolve offline).
 
 ## Conventions
-- Python 3.10+, line length 100, ruff-clean (`E,F,I,UP,B,W`; `B008` is ignored for Typer).
+- Python 3.12+, line length 100, ruff-clean and ruff-formatted (`E,F,I,UP,B,W`;
+  `B008` is ignored for Typer).
+- Treat perfectly linted/formatted code as non-negotiable: run `ruff check --fix`, `ruff format`,
+  then `ruff check` before handoff. The repo has pre-commit hooks and CI for this, but agents
+  should still run the commands locally.
+- Maintain good test coverage for every behavior change. Add focused offline tests for new Pier
+  config/result adapters, CLI behavior, session parsing, and migration paths; avoid relying only on
+  broad smoke tests.
 - Prefer small, well-typed functions; keep modules single-purpose (see the map above).
 - Update `docs/` and the experiment-repo template when you change public behavior.
 - Record significant/architectural decisions as an ADR under `docs/adr/` (copy `0000-template.md`).

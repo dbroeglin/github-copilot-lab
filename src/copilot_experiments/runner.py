@@ -113,8 +113,14 @@ def run_experiment(
     for variant in experiment.variants:
         _report(progress, f"variant {variant.slug}: {variant.trials} trial(s)")
         vr = _run_variant(
-            experiment, variant, layout, run_id, invoker, session_state_root,
-            github_token, progress,
+            experiment,
+            variant,
+            layout,
+            run_id,
+            invoker,
+            session_state_root,
+            github_token,
+            progress,
         )
         run.variants.append(vr)
         write_json(
@@ -191,8 +197,6 @@ def _run_task(
         task_slug=task_slug,
         task_name=task.name,
         prompt=task.prompt,
-        instance_id=task.swebench.instance_id if task.swebench else None,
-        difficulty=task.swebench.difficulty if task.swebench else None,
     )
     for trial_no in range(1, variant.trials + 1):
         tr.trials.append(
@@ -343,17 +347,20 @@ def _run_trial(
         error=error,
         error_artifact=error_artifact,
     )
-    write_json(trial_dir / "meta.json", {
-        "trial_no": trial_no,
-        "session_id": session_id,
-        "exit_code": exit_code,
-        "duration_s": trial.duration_s,
-        "success": success,
-        "status": status,
-        "error": error,
-        "error_artifact": error_artifact,
-        "workspace": str(workspace),
-    })
+    write_json(
+        trial_dir / "meta.json",
+        {
+            "trial_no": trial_no,
+            "session_id": session_id,
+            "exit_code": exit_code,
+            "duration_s": trial.duration_s,
+            "success": success,
+            "status": status,
+            "error": error,
+            "error_artifact": error_artifact,
+            "workspace": str(workspace),
+        },
+    )
     write_json(trial_dir / "metrics.json", metrics.model_dump(mode="json"))
     return trial
 
@@ -482,9 +489,7 @@ def _validate_plumbing(
     if layout.index_db.exists():
         conn = connect(layout.index_db)
         try:
-            row = conn.execute(
-                "SELECT 1 FROM runs WHERE run_id = ?", (run.run_id,)
-            ).fetchone()
+            row = conn.execute("SELECT 1 FROM runs WHERE run_id = ?", (run.run_id,)).fetchone()
             indexed = row is not None
         finally:
             conn.close()

@@ -17,8 +17,9 @@ def test_init_creates_expected_files(tmp_path: Path):
     assert (dest / "README.md").exists()
     assert (dest / "AGENTS.md").exists()
     assert (dest / "apm.yml").exists()
-    assert (dest / "experiments" / "example_fix_bug.py").exists()
-    assert (dest / "fixtures" / "buggy_calculator" / "calculator.py").exists()
+    assert (dest / "experiments" / "example.yaml").exists()
+    assert (dest / "tasks" / "example-fix-bug" / "task.toml").exists()
+    assert (dest / "tasks" / "example-fix-bug" / "environment" / "calculator.py").exists()
     # No .tmpl files should remain.
     assert not list(dest.rglob("*.tmpl"))
     assert created
@@ -28,8 +29,11 @@ def test_init_renders_placeholders(tmp_path: Path):
     dest = tmp_path / "cool-proj"
     init_experiment_repo(dest, project_name="cool-proj")
     pyproject = (dest / "pyproject.toml").read_text(encoding="utf-8")
+    task_toml = (dest / "tasks" / "example-fix-bug" / "task.toml").read_text(encoding="utf-8")
     assert "cool-proj" in pyproject
     assert "{{project_name}}" not in pyproject
+    assert 'name = "cool-proj/example-fix-bug"' in task_toml
+    assert "{{project_name}}" not in task_toml
 
 
 def test_init_refuses_nonempty_without_force(tmp_path: Path):

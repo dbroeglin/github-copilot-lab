@@ -111,8 +111,8 @@ def analyze_events(events: list[dict[str, Any]]) -> SessionAnalysis:
     """Reconstruct a :class:`SessionAnalysis` from a list of session events."""
     analysis = SessionAnalysis()
     models: list[str] = []
-    tool_names: dict[str, str] = {}        # toolCallId -> toolName
-    tool_stats: dict[str, ToolStat] = {}   # toolName -> stat
+    tool_names: dict[str, str] = {}  # toolCallId -> toolName
+    tool_stats: dict[str, ToolStat] = {}  # toolName -> stat
     turns: list[TurnSummary] = []
     current: TurnSummary | None = None
     timestamps: list[_dt.datetime] = []
@@ -249,3 +249,183 @@ def analyze_events(events: list[dict[str, Any]]) -> SessionAnalysis:
         analysis.duration_s = round((last - first).total_seconds(), 3)
 
     return analysis
+
+
+def analyze_trajectory(trajectory: dict[str, Any]) -> SessionAnalysis:
+    """Reconstruct a :class:`SessionAnalysis` from an ATIF ``trajectory.json``.
+
+    Native Copilot ``events.jsonl`` remains the richer source of truth. This fallback covers Pier
+    jobs where the Copilot CLI produced structured JSON/ATIF but did not emit native session events.
+    """
+
+    analysis = SessionAnalysis(
+        session_id=_string_or_none(trajectory.get("session_id")),
+        producer="ATIF trajectory",
+    )
+    agent = trajectory.get("agent") or {}
+    if isinstance(agent, dict):
+        analysis.copilot_version = _string_or_none(agent.get("version"))
+        _add_model(analysis.models, agent.get("model_name"))
+
+    steps = trajectory.get("steps") or []
+    if not isinstance(steps, list):
+        steps = []
+    analysis.n_events = len(steps)
+
+    timestamps: list[_dt.datetime] = []
+    output_tokens = 0
+    saw_output_tokens = False
+    tool_stats: dict[str, ToolStat] = {}
+
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+
+        timestamp = _string_or_none(step.get("timestamp"))
+        ts = _parse_ts(timestamp)
+        if ts is not None:
+            timestamps.append(ts)
+        _add_model(analysis.models, step.get("model_name"))
+
+        source = step.get("source")
+        if source == "user":
+            analysis.n_user_messages += 1
+            continue
+        if source != "agent":
+            continue
+
+        analysis.n_assistant_messages += 1
+        tool_calls = _trajectory_tool_calls(step)
+        tool_names = [name for name, _call_id in tool_calls]
+        for name, call_id in tool_calls:
+            analysis.n_tool_calls += 1
+            stat = tool_stats.setdefault(name, ToolStat(name=name))
+            stat.calls += 1
+            if _trajectory_tool_failed(step, call_id):
+                stat.failures += 1
+                analysis.n_tool_failures += 1
+
+        completion_tokens = _int_or_none((step.get("metrics") or {}).get("completion_tokens"))
+        if completion_tokens is not None:
+            output_tokens += completion_tokens
+            saw_output_tokens = True
+
+        turn = TurnSummary(
+            turn_no=len(analysis.turns) + 1,
+            started_at=timestamp,
+            assistant_messages=1,
+            text_preview=_preview(step.get("message")),
+            tools=tool_names,
+            output_tokens=completion_tokens,
+        )
+        analysis.turns.append(turn)
+
+    analysis.n_turns = len(analysis.turns)
+    analysis.tools = sorted(tool_stats.values(), key=lambda s: (-s.calls, s.name))
+    analysis.phases = _compute_phases(analysis.turns)
+
+    final_metrics = trajectory.get("final_metrics") or {}
+    if isinstance(final_metrics, dict):
+        prompt_tokens = _int_or_none(final_metrics.get("total_prompt_tokens"))
+        completion_tokens = _int_or_none(final_metrics.get("total_completion_tokens"))
+        cached_tokens = _int_or_none(final_metrics.get("total_cached_tokens"))
+        if prompt_tokens is not None:
+            analysis.input_tokens = prompt_tokens
+            analysis.economics.input_tokens_total = prompt_tokens
+            analysis.economics.input_tokens_noncached = prompt_tokens
+        if completion_tokens is not None:
+            analysis.output_tokens = completion_tokens
+            analysis.economics.output_tokens = completion_tokens
+        elif saw_output_tokens:
+            analysis.output_tokens = output_tokens
+            analysis.economics.output_tokens = output_tokens
+        if cached_tokens is not None:
+            analysis.economics.cache_read_tokens = cached_tokens
+        if analysis.input_tokens is not None or analysis.output_tokens is not None:
+            analysis.total_tokens = (analysis.input_tokens or 0) + (analysis.output_tokens or 0)
+            analysis.economics.total_tokens = analysis.total_tokens
+        extra = final_metrics.get("extra") or {}
+        if isinstance(extra, dict):
+            analysis.economics.aiu = _float_or_none(extra.get("aiu"))
+            analysis.economics.reasoning_tokens = _int_or_none(extra.get("reasoning_tokens"))
+            analysis.economics.peak_context_tokens = _int_or_none(extra.get("peak_context_tokens"))
+            analysis.economics.n_compactions = _int_or_none(extra.get("summarization_count")) or 0
+    elif saw_output_tokens:
+        analysis.output_tokens = output_tokens
+
+    if analysis.output_tokens is None and saw_output_tokens:
+        analysis.output_tokens = output_tokens
+    if analysis.economics.output_tokens is None and analysis.output_tokens is not None:
+        analysis.economics.output_tokens = analysis.output_tokens
+    if analysis.economics.total_tokens is None and (
+        analysis.input_tokens is not None or analysis.output_tokens is not None
+    ):
+        analysis.total_tokens = (analysis.input_tokens or 0) + (analysis.output_tokens or 0)
+        analysis.economics.total_tokens = analysis.total_tokens
+
+    if timestamps:
+        first, last = min(timestamps), max(timestamps)
+        analysis.started_at = first.isoformat().replace("+00:00", "Z")
+        analysis.finished_at = last.isoformat().replace("+00:00", "Z")
+        analysis.duration_s = round((last - first).total_seconds(), 3)
+
+    return analysis
+
+
+def _trajectory_tool_calls(step: dict[str, Any]) -> list[tuple[str, str]]:
+    calls = step.get("tool_calls") or []
+    if not isinstance(calls, list):
+        return []
+    result: list[tuple[str, str]] = []
+    for call in calls:
+        if not isinstance(call, dict):
+            continue
+        name = _string_or_none(call.get("function_name")) or "unknown"
+        call_id = _string_or_none(call.get("tool_call_id")) or ""
+        result.append((name, call_id))
+    return result
+
+
+def _trajectory_tool_failed(step: dict[str, Any], call_id: str) -> bool:
+    observation = step.get("observation") or {}
+    if not isinstance(observation, dict):
+        return False
+    results = observation.get("results") or []
+    if not isinstance(results, list):
+        return False
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        if call_id and result.get("source_call_id") not in (call_id, None):
+            continue
+        content = _string_or_none(result.get("content")) or ""
+        lowered = content.lower()
+        if (
+            '"code": "failure"' in lowered
+            or '"code":"failure"' in lowered
+            or '"code": "denied"' in lowered
+            or '"code":"denied"' in lowered
+            or "permission denied" in lowered
+        ):
+            return True
+    return False
+
+
+def _int_or_none(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    return None
+
+
+def _float_or_none(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _string_or_none(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None

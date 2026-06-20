@@ -4,25 +4,27 @@ This repository contains **GitHub Copilot research experiments** built with the
 `copilot-experiments` library and CLI.
 
 ## What lives where
-- `experiments/*.py` — experiment definitions. Each exposes an `Experiment` (variable
-  `experiment`, an `experiments` list, or a `get_experiments()` function).
-- `fixtures/<name>/` — a starting workspace copied fresh for every trial.
-- `results/` — generated artifacts and the SQLite index. **Never edit by hand**; it is
-  regenerable via `copilot-experiments reindex`.
+- `experiments/*.yaml` — Pier JobConfig files that choose tasks, agents, models, attempts,
+  concurrency, and artifacts.
+- `tasks/<name>/` — Harbor/Pier task directories (`task.toml`, `instruction.md`, `environment/`,
+  `tests/`).
+- `jobs/` — Pier job outputs. **Never edit by hand**; they are canonical run artifacts.
+- `results/` — derived SQLite index. Regenerate with `copilot-experiments reindex`.
 - `.apm/` — APM-managed agent context (instructions, skills, prompts).
 
 ## Authoring an experiment
-1. Add a fixture under `fixtures/` (a self-contained workspace).
-2. Create `experiments/<name>.py` defining a `Task` (prompt, `fixture`, optional `setup`
-   and `verify`) and a list of `Variant`s (model / reasoning_effort / agent / BYOK matrix).
-3. Validate with a dry-run: `uv run copilot-experiments run --dry-run` (runs the whole
-   pipeline in a temp dir, checks each stage, and persists nothing).
+1. Add a deterministic Pier task under `tasks/<name>/`.
+2. Create `experiments/<name>.yaml` with a Pier `JobConfig` using `name: copilot-cli` for
+   GitHub Copilot CLI runs.
+3. Validate config loading with `uv run copilot-experiments run --dry-run`.
 
 ## Conventions
-- Keep prompts and fixtures deterministic and self-contained.
-- Prefer a `verify` command that exits non-zero on failure so effectiveness is measured.
-- Use multiple `trials` per variant when you need statistical robustness.
-- Do not commit `results/` (it is gitignored).
+- Keep instructions and task environments deterministic and self-contained.
+- Verifier scripts should write `/logs/verifier/reward.txt` or `reward.json` and exit non-zero on
+  failure.
+- Use `n_attempts > 1` when you need statistical robustness.
+- Do not commit `jobs/` or `results/` (they are gitignored).
+- Keep code ruff-formatted/linted and add focused tests for behavior changes.
 
 ## Commands
 ```bash
@@ -30,5 +32,6 @@ uv sync
 uv run copilot-experiments run [--dry-run]
 uv run copilot-experiments list
 uv run copilot-experiments show --last
-uv run copilot-experiments inspect <run-id> --variant <slug> --trial <n>
+uv run copilot-experiments inspect <job-name> --trial <n>
+uv run copilot-experiments analyze <job-name> --trial <n>
 ```

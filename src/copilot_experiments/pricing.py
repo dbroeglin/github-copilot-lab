@@ -43,11 +43,7 @@ def rates_from_compaction(data: dict[str, Any]) -> dict[str, float] | None:
     Looks for ``compactionTokensUsed.copilotUsage.tokenDetails`` -- a list of
     ``{tokenType, costPerBatch, batchSize}`` entries. Returns ``None`` when absent or malformed.
     """
-    details = (
-        (data.get("compactionTokensUsed") or {})
-        .get("copilotUsage", {})
-        .get("tokenDetails")
-    )
+    details = (data.get("compactionTokensUsed") or {}).get("copilotUsage", {}).get("tokenDetails")
     if not isinstance(details, list):
         return None
     rates: dict[str, float] = {}

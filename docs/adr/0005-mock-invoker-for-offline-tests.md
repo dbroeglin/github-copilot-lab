@@ -1,6 +1,6 @@
 # 0005. A MockInvoker keeps the harness offline-testable
 
-- **Status:** Accepted (amended by [ADR-0008](0008-dry-run-is-ephemeral-plumbing-check.md))
+- **Status:** Superseded by [ADR-0015](0015-adopt-pier-for-sandboxed-agent-evals.md) for Pier runs
 - **Date:** 2026-06-14
 
 > **Amendment (ADR-0008):** the `--dry-run` behaviour described below changed. A dry-run is no
@@ -9,6 +9,9 @@
 > smoke test" and "dry-runs produce meaningful analyses" are superseded — those analyses are now
 > validated and then discarded. The `MockInvoker` itself, and its role in offline testing, are
 > unchanged.
+>
+> **Amendment (ADR-0015):** the `MockInvoker` path remains only for legacy Python experiments.
+> Pier-native tests use config and job-output fixtures, and Pier `--dry-run` validates configs.
 
 ## Context
 
