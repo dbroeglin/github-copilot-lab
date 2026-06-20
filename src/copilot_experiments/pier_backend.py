@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,19 @@ class PierRunResult:
 
     job_dir: Path
     result: Any
+
+
+@dataclass(frozen=True)
+class PreparedPierJob:
+    """A Pier config ready to run, plus any job-name adjustment made for freshness."""
+
+    config: Any
+    requested_name: str
+    run_name: str
+
+    @property
+    def renamed(self) -> bool:
+        return self.requested_name != self.run_name
 
 
 def discover_pier_job_configs(root: Path, name: str | None = None) -> list[PierJobSpec]:
@@ -121,6 +135,40 @@ def inject_copilot_token(config: Any, token: str) -> None:
         agent.env.setdefault("GH_TOKEN", token)
 
 
+def prepare_pier_job_for_run(
+    config: Any,
+    *,
+    resume: bool = False,
+    now: datetime | None = None,
+) -> PreparedPierJob:
+    """Return a run-ready config.
+
+    Pier resumes an existing matching ``jobs/<job_name>`` directory and skips completed trials.
+    For an experiment harness, a plain ``run`` should create a new measurement instead, while
+    explicit ``--resume`` should preserve Pier's native behavior.
+    """
+
+    prepared = config.model_copy(deep=True)
+    requested_name = str(prepared.job_name)
+    if resume:
+        return PreparedPierJob(prepared, requested_name, requested_name)
+
+    requested_dir = _job_dir(prepared)
+    if not requested_dir.exists():
+        return PreparedPierJob(prepared, requested_name, requested_name)
+
+    stamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
+    base = f"{requested_name}-{stamp}"
+    run_name = base
+    index = 2
+    while (Path(prepared.jobs_dir) / run_name).exists():
+        run_name = f"{base}-{index}"
+        index += 1
+
+    prepared.job_name = run_name
+    return PreparedPierJob(prepared, requested_name, run_name)
+
+
 def run_pier_job(config: Any) -> PierRunResult:
     """Run a Pier job through Pier's Python API."""
 
@@ -137,3 +185,7 @@ def run_pier_job(config: Any) -> PierRunResult:
 def _resolve_path(path: Path, base: Path) -> Path:
     path = Path(path)
     return path if path.is_absolute() else (base / path).resolve()
+
+
+def _job_dir(config: Any) -> Path:
+    return Path(config.jobs_dir) / str(config.job_name)

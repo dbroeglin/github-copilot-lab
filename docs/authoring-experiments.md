@@ -129,6 +129,11 @@ uv run copilot-experiments analyze --last --trial 1
 Python experiment path still has an ephemeral mock dry-run, but Pier is the primary authoring
 model.
 
+Pier itself resumes existing matching job directories and skips trials that already have
+`result.json`. `copilot-experiments run` treats a plain rerun as a fresh measurement instead: when
+`jobs/<job_name>/` already exists, it appends a timestamp to the Pier job name for the new run. Pass
+`--resume` to opt into Pier's native resume behavior for interrupted jobs.
+
 ## Legacy Python experiments
 
 The old `Experiment`, `Task`, and `Variant` API remains temporarily for migration and tests. It is

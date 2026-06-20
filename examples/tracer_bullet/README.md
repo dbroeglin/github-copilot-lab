@@ -22,9 +22,13 @@ The job pins `gpt-5-mini` at `low` reasoning effort in
 `experiments/textstats.yaml` so the smoke test stays inexpensive. Change that YAML to compare
 models, efforts, or attempts.
 
+Re-running the command creates a fresh timestamped job if `jobs/tracer-bullet-textstats/` already
+exists. Use `--resume` only to continue an interrupted Pier job and intentionally skip completed
+trials.
+
 ## What gets captured
 
-Pier writes the canonical job under `jobs/tracer-bullet-textstats/`. Each trial keeps Pier's
-`result.json`, verifier output, requested artifacts, ATIF `trajectory.json`, raw Copilot CLI
-stdout/JSONL, and native Copilot `copilot-session/**/events.jsonl` for AIU/token/session
-analysis.
+Pier writes the first job under `jobs/tracer-bullet-textstats/` and subsequent reruns under
+timestamped sibling directories. Each trial keeps Pier's `result.json`, verifier output, requested
+artifacts, ATIF `trajectory.json`, raw Copilot CLI stdout/JSONL, and native Copilot
+`copilot-session/**/events.jsonl` for AIU/token/session analysis.

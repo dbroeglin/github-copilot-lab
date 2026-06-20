@@ -17,7 +17,12 @@ from .auth import AuthError, preflight_github_token
 from .index import list_runs as index_list_runs
 from .index import reindex as index_reindex
 from .models import DryRunReport, Experiment, ExperimentRun
-from .pier_backend import discover_pier_job_configs, inject_copilot_token, run_pier_job
+from .pier_backend import (
+    discover_pier_job_configs,
+    inject_copilot_token,
+    prepare_pier_job_for_run,
+    run_pier_job,
+)
 from .pier_results import (
     resolve_pier_trial_analysis_source,
     write_pier_summary,
@@ -145,7 +150,15 @@ def run(
         False,
         "--verbose",
         "-v",
-        help="Stream per-trial progress and live Copilot output as the run proceeds.",
+        help="Enable debug-level Pier output. Legacy experiments also stream Copilot output.",
+    ),
+    resume: bool = typer.Option(
+        False,
+        "--resume",
+        help=(
+            "Resume an existing Pier job directory instead of creating a fresh rerun when the "
+            "configured job name already exists."
+        ),
     ),
 ) -> None:
     """Discover and run experiment(s) defined under ``experiments/``.
@@ -154,9 +167,9 @@ def run(
     temporary directory, each stage is validated, and everything is deleted again --
     no run is recorded under ``results/``.
 
-    Pass ``--verbose`` to stream per-trial progress (workspace provisioning, the
-    Copilot invocation, session-log/metrics, and verification) plus Copilot's own
-    output live as the run proceeds.
+    Pier configs create a fresh job directory on rerun when the configured job name
+    already exists. Pass ``--resume`` to opt into Pier's native resume behavior, which
+    skips trials that already completed for the same resolved config.
     """
     root = Path(root or Path.cwd())
     layout = Layout(root)
@@ -188,10 +201,19 @@ def run(
 
         any_failures = False
         for spec in pier_specs:
-            inject_copilot_token(spec.config, auth.token)
-            console.print(f"[bold]Running Pier job[/bold] {spec.name}")
+            prepared = prepare_pier_job_for_run(spec.config, resume=resume)
+            if verbose:
+                prepared.config.debug = True
+            inject_copilot_token(prepared.config, auth.token)
+            console.print(f"[bold]Running Pier job[/bold] {prepared.run_name}")
+            if prepared.renamed:
+                console.print(
+                    f"[dim]existing job[/dim] {prepared.requested_name} "
+                    f"[dim]found; writing fresh rerun to[/dim] {prepared.run_name} "
+                    "[dim](use --resume to reuse the existing job)[/dim]"
+                )
             try:
-                run_result = run_pier_job(spec.config)
+                run_result = run_pier_job(prepared.config)
             except Exception as exc:
                 err.print(f"[red]Pier job failed:[/red] {type(exc).__name__}: {exc}")
                 any_failures = True

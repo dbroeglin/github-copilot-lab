@@ -53,6 +53,11 @@ uv run copilot-experiments analyze --last
 Real runs require Copilot auth (`COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth
 login`) and a Pier-supported execution backend such as Docker.
 
+Each `run` is a new measurement. If the configured Pier `job_name` already exists under `jobs/`,
+`copilot-experiments` writes the rerun to a timestamped job name instead of silently reusing the
+completed job. Pass `--resume` only when you intentionally want Pier's native resume behavior for an
+interrupted job.
+
 ## Bundled examples
 
 ```bash
@@ -69,8 +74,9 @@ uv run copilot-experiments analyze --root examples/tracer_bullet --last
 | Command | Description |
 | --- | --- |
 | `init <dir>` | Scaffold a standalone Pier experiment repository. |
-| `run [name]` | Discover Pier job configs in `experiments/` and run them. Falls back to legacy Python experiments when no Pier configs exist. |
+| `run [name]` | Discover Pier job configs in `experiments/` and run them. Reruns create a fresh timestamped Pier job when the configured name already exists. Falls back to legacy Python experiments when no Pier configs exist. |
 | `run --dry-run` | Validate Pier job configs, or run the legacy ephemeral mock dry-run for legacy experiments. |
+| `run --resume` | Resume an existing Pier job directory and skip already-completed matching trials. |
 | `list` | List Pier job configs, legacy experiments, and stored jobs/runs. |
 | `show <job>` / `show --last` | Print a summary for a Pier job or legacy run. |
 | `analyze <job>` / `analyze --last` / `analyze --file <events.jsonl>` | Render a rich overview of a native Copilot session log. |

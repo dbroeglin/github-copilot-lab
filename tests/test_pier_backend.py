@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from copilot_experiments.pier_backend import (
     discover_pier_job_configs,
     inject_copilot_token,
     load_pier_job_config,
+    prepare_pier_job_for_run,
 )
 
 
@@ -72,6 +74,49 @@ def test_inject_copilot_token_only_updates_copilot_agents(tmp_path: Path):
     assert config.agents[0].env["COPILOT_GITHUB_TOKEN"] == "token-123"
     assert config.agents[0].env["GITHUB_TOKEN"] == "token-123"
     assert config.agents[1].env == {}
+
+
+def test_prepare_pier_job_for_run_keeps_first_run_name(tmp_path: Path):
+    config_path = tmp_path / "job.yaml"
+    config_path.write_text("job_name: smoke\njobs_dir: jobs\n", encoding="utf-8")
+    config = load_pier_job_config(config_path, root=tmp_path)
+
+    prepared = prepare_pier_job_for_run(config)
+
+    assert prepared.requested_name == "smoke"
+    assert prepared.run_name == "smoke"
+    assert not prepared.renamed
+    assert config.job_name == "smoke"
+
+
+def test_prepare_pier_job_for_run_uses_fresh_name_when_job_exists(tmp_path: Path):
+    config_path = tmp_path / "job.yaml"
+    config_path.write_text("job_name: smoke\njobs_dir: jobs\n", encoding="utf-8")
+    config = load_pier_job_config(config_path, root=tmp_path)
+    (tmp_path / "jobs" / "smoke").mkdir(parents=True)
+
+    prepared = prepare_pier_job_for_run(
+        config,
+        now=datetime(2026, 6, 20, 15, 30, 0),
+    )
+
+    assert prepared.requested_name == "smoke"
+    assert prepared.run_name == "smoke-20260620-153000"
+    assert prepared.config.job_name == "smoke-20260620-153000"
+    assert prepared.renamed
+    assert config.job_name == "smoke"
+
+
+def test_prepare_pier_job_for_run_resume_keeps_existing_name(tmp_path: Path):
+    config_path = tmp_path / "job.yaml"
+    config_path.write_text("job_name: smoke\njobs_dir: jobs\n", encoding="utf-8")
+    config = load_pier_job_config(config_path, root=tmp_path)
+    (tmp_path / "jobs" / "smoke").mkdir(parents=True)
+
+    prepared = prepare_pier_job_for_run(config, resume=True)
+
+    assert prepared.run_name == "smoke"
+    assert not prepared.renamed
 
 
 @pytest.mark.parametrize(
