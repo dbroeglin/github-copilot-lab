@@ -110,7 +110,7 @@ Useful knobs:
 | `model_name` | Model passed to the agent. For Copilot CLI this becomes `--model`. |
 | `kwargs.reasoning_effort` | Copilot `--effort`. |
 | `kwargs.mode` | Copilot `--mode` (`plan`, `interactive`, `autopilot`). |
-| `kwargs.context_tier` | Copilot `--context-tier`. |
+| `kwargs.context_tier` | Copilot context-window tier (`default` or `long_context`). |
 | `kwargs.extra_args` | Raw extra Copilot CLI arguments. |
 | `n_attempts` | Repetitions per agent/task cell. |
 | `n_concurrent_trials` | Pier concurrency. |
