@@ -33,6 +33,9 @@ uv run copilot-experiments analyze tracer-bullet-textstats --trial 1
 # ~/.copilot/session-state/<id>/events.jsonl
 uv run copilot-experiments analyze --file path/to/events.jsonl
 
+# Direct file analysis enriched with OTel per-LLM-call spans
+uv run copilot-experiments analyze --file path/to/events.jsonl --otel-file path/to/copilot-otel.jsonl
+
 # Long sessions: cap the timeline table
 uv run copilot-experiments analyze --last --max-turns 15
 ```
@@ -52,23 +55,30 @@ The rendering (built with [Rich](https://rich.readthedocs.io/)) has these parts:
    time, ms/request, current & peak context, system/tool-definition tokens, compactions,
    truncations, files modified, lines ±, AIU per line). Multi-model sessions also get a per-model
    table. See [ADR-0011](adr/0011-token-economics-from-session-shutdown.md).
-5. **Phases (temporal)** — *only when the session has at least five turns.* The turns are split
+5. **LLM calls (OTel)** — *only when `copilot-otel.jsonl` is available.* One row per `chat <model>`
+   span with turn id, model, input tokens, cache-write tokens, output tokens, AIU, API time, and
+   current context size.
+6. **Phases (temporal)** — *only when the session has at least five turns.* The turns are split
    into five contiguous, near-equal groups (`early` → `later`) and each phase shows its turn span,
    tool calls, output tokens, share of total output, and duration. This mirrors the phase-level
    analysis in Bai et al. (their Finding #6: context construction dominates early phases,
    generation later ones) — tool-heavy, low-output early phases give way to higher output-share
    later ones. See the limitation note below.
-6. **Timeline** — one row per assistant turn: time, duration, output tokens, the tools invoked
+7. **Timeline** — one row per assistant turn: time, duration, output tokens, the tools invoked
    in that turn, and a preview of what the assistant said.
 
 Warnings, if any, are shown in a panel at the bottom.
 
-> **Phases use per-turn data only — no per-phase input/cache/cost.** Copilot logs input, cache,
-> reasoning, and AIU **only as session totals** (`session.shutdown`), never per turn; the per-turn
-> `assistant.message` carries `outputTokens` but not `inputTokens`. So the phase table faithfully
-> distributes the signals that *are* per-turn — output tokens, tool activity, and duration — and
-> deliberately does **not** fabricate per-phase input or cost. This captures the measurable part of
-> the paper's Finding #6 (the early-vs-late *shape* of activity) without inventing data.
+> **Phases use native per-turn data only — no per-phase input/cache/cost yet.** Native
+> `events.jsonl` logs input, cache, reasoning, and AIU **only as session totals**
+> (`session.shutdown`), never per turn; the per-turn `assistant.message` carries `outputTokens` but
+> not `inputTokens`. Copilot's OTel `chat <model>` spans expose per-LLM-call `input_tokens`,
+> `cache_creation_input_tokens`, `output_tokens`, `nano_aiu`, and server duration when OTel export is
+> enabled; `analyze` auto-loads the harness-captured `copilot-otel.jsonl` when present, or accepts
+> `--otel-file` for direct log analysis. The current phase table still distributes only the native
+> per-turn signals — output tokens, tool activity, and duration — and deliberately does **not**
+> fabricate per-phase input or cost. The separate **LLM calls (OTel)** table carries the per-call
+> economics.
 
 > **A blank "assistant said" is normal — it is not a missing-data bug.** Many turns invoke a
 > tool without any accompanying prose, so the assistant text is genuinely empty and the row
@@ -102,7 +112,8 @@ legacy `analysis.json`, and any future consumer.
 | `input_tokens`, `output_tokens`, `total_tokens` | Token usage (authoritative from `session.shutdown` when present). |
 | `economics` | `TokenEconomics`: token-type split, AIU cost, context composition, productivity (see below). |
 | `tools` | `ToolStat(name, calls, failures, total_duration_ms, total_result_chars)`, sorted by calls desc. |
-| `turns` | `TurnSummary(turn_no, duration_s, tools, output_tokens, text_preview, …)`. |
+| `llm_calls` | `LlmCallSummary` rows parsed from OTel `chat <model>` spans when `copilot-otel.jsonl` is available. |
+| `turns` | `TurnSummary(turn_no, duration_s, tools, output_tokens, text_preview, …)` plus OTel `input_tokens`, `cache_creation_input_tokens`, `aiu`, and `api_duration_ms` when available. |
 | `phases` | `PhaseStat(name, turn_from, turn_to, n_turns, n_tool_calls, output_tokens, duration_s, output_share)` — five temporal phases (empty for sessions under five turns). |
 | `warnings` | Warning messages. |
 | `event_type_counts` | Histogram of raw event `type`s. |
@@ -130,6 +141,12 @@ The AIU math lives in [`pricing.py`](../src/copilot_experiments/pricing.py): it 
 per-token-type rates from `session.compaction_complete` (`costPerBatch`) when available, falls back
 to documented defaults otherwise, and normalises the split so it always sums to the authoritative
 `totalNanoAiu`. See [ADR-0011](adr/0011-token-economics-from-session-shutdown.md).
+
+Pier `agent/trajectory.json` carries the same OTel facts when the local file export is present.
+Assistant steps matched by `turnId` get ATIF `metrics.prompt_tokens`, `metrics.completion_tokens`,
+`llm_call_count`, and `metrics.extra.copilot_otel`; `final_metrics.extra.copilot_otel` stores the
+aggregate per-call totals. The native `events.jsonl` path remains authoritative for session-level
+totals when a `session.shutdown` exists.
 
 ## How the session log is read
 

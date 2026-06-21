@@ -159,8 +159,8 @@ def _phases_table(a: SessionAnalysis) -> Table | None:
     """Per-phase output/tool/duration distribution (Bai et al. Finding #6).
 
     Returns ``None`` for short sessions (< 5 turns) where phases carry no signal.
-    Per-phase input/cache/cost are intentionally absent -- Copilot logs those only
-    as session totals, not per turn (see ``docs/analysis.md``).
+    Per-phase input/cache/cost are intentionally absent from this table; OTel
+    per-call economics render separately (see ``docs/analysis.md``).
     """
     if not a.phases:
         return None
@@ -181,6 +181,36 @@ def _phases_table(a: SessionAnalysis) -> Table | None:
             _int(p.output_tokens),
             share,
             _dur(p.duration_s),
+        )
+    return table
+
+
+def _llm_calls_table(a: SessionAnalysis) -> Table | None:
+    if not a.llm_calls:
+        return None
+    table = Table(title="LLM calls (OTel)", title_justify="left")
+    table.add_column("turn", justify="right")
+    table.add_column("model")
+    table.add_column("in", justify="right")
+    table.add_column("cache write", justify="right")
+    table.add_column("out", justify="right")
+    table.add_column("AIU", justify="right")
+    table.add_column("API", justify="right")
+    table.add_column("ctx", justify="right")
+    for call in a.llm_calls:
+        model = call.response_model or call.request_model or "-"
+        api_duration = (
+            _dur(call.server_duration_ms / 1000) if call.server_duration_ms is not None else "-"
+        )
+        table.add_row(
+            call.turn_id or "-",
+            model,
+            _int(call.input_tokens),
+            _int(call.cache_creation_input_tokens),
+            _int(call.output_tokens),
+            _aiu(call.aiu),
+            api_duration,
+            _int(call.current_tokens),
         )
     return table
 
@@ -261,6 +291,10 @@ def render_session_analysis(
     if econ:
         console.print()
         console.print(Columns(econ, padding=(0, 4)))
+    llm_calls = _llm_calls_table(analysis)
+    if llm_calls is not None:
+        console.print()
+        console.print(llm_calls)
     phases = _phases_table(analysis)
     if phases is not None:
         console.print()

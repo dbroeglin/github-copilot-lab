@@ -16,6 +16,7 @@ Pier layout (inside an experiment repository)::
           agent/
             trajectory.json
             copilot-cli.jsonl
+            copilot-otel.jsonl
             copilot-session/**/events.jsonl
           verifier/
           artifacts/
@@ -42,6 +43,7 @@ Legacy layout (inside an experiment repository)::
                       stdout.txt                # raw copilot stdout/stderr (diagnostics)
                       session.md                # copilot's markdown transcript (--share)
                       events.jsonl              # copied session events (structured source)
+                      copilot-otel.jsonl         # OTel spans/metrics (per-call economics)
                       metrics.json              # parsed metrics
                       analysis.json             # richer session analysis
                       workspace.diff            # git diff of the workspace

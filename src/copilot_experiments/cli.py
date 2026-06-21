@@ -497,6 +497,9 @@ def analyze(
     file: Path | None = typer.Option(
         None, "--file", help="Analyze an events.jsonl file directly (ignores run/variant/trial)."
     ),
+    otel_file: Path | None = typer.Option(
+        None, "--otel-file", help="Optional Copilot OTel JSONL file to enrich analysis."
+    ),
     last: bool = typer.Option(False, "--last", help="Analyze the most recent run."),
     max_turns: int = typer.Option(0, "--max-turns", help="Limit timeline rows (0 = all)."),
     root: Path | None = typer.Option(None, "--root", help="Experiment repository root."),
@@ -507,8 +510,9 @@ def analyze(
         if not events:
             err.print(f"[red]No events found in[/red] {file}")
             raise typer.Exit(1)
+        otel_records = load_events(otel_file) if otel_file is not None else None
         render_session_analysis(
-            analyze_events(events), console, title=file.name, max_turns=max_turns
+            analyze_events(events, otel_records), console, title=file.name, max_turns=max_turns
         )
         return
 
@@ -522,12 +526,18 @@ def analyze(
     )
     if run_dir is None:
         if pier_job is not None:
-            source_path, label, source_kind = resolve_pier_trial_analysis_source(pier_job, trial)
+            source_path, label, source_kind, discovered_otel = resolve_pier_trial_analysis_source(
+                pier_job, trial
+            )
             if source_path is None:
                 err.print(f"[red]No Copilot session log or trajectory found in[/red] {pier_job}")
                 raise typer.Exit(1)
+            selected_otel = otel_file or discovered_otel
             analysis = (
-                analyze_events(load_events(source_path))
+                analyze_events(
+                    load_events(source_path),
+                    load_events(selected_otel) if selected_otel is not None else None,
+                )
                 if source_kind == "events"
                 else analyze_trajectory(read_json(source_path))
             )
@@ -537,13 +547,20 @@ def analyze(
         err.print("[red]Run not found.[/red] Pass a run id, --last, or --file.")
         raise typer.Exit(1)
 
-    events_path, label = _resolve_trial_events(run_dir, variant, task, trial)
+    events_path, label, discovered_otel = _resolve_trial_events(run_dir, variant, task, trial)
     if events_path is None:
         err.print(f"[red]No trial session log found in[/red] {run_dir}")
         raise typer.Exit(1)
 
+    selected_otel = otel_file or discovered_otel
     render_session_analysis(
-        analyze_events(load_events(events_path)), console, title=label, max_turns=max_turns
+        analyze_events(
+            load_events(events_path),
+            load_events(selected_otel) if selected_otel is not None else None,
+        ),
+        console,
+        title=label,
+        max_turns=max_turns,
     )
 
 
@@ -563,7 +580,7 @@ def reindex(
 # --------------------------------------------------------------------------- #
 def _resolve_trial_events(
     run_dir: Path, variant: str | None, task: str | None, trial: int | None
-) -> tuple[Path | None, str]:
+) -> tuple[Path | None, str, Path | None]:
     """Locate a trial's ``events.jsonl``, defaulting to the first variant/task/trial."""
     variants_dir = run_dir / "variants"
     if variant is not None:
@@ -573,7 +590,7 @@ def _resolve_trial_events(
             sorted(p for p in variants_dir.iterdir() if p.is_dir()) if variants_dir.is_dir() else []
         )
         if not subdirs:
-            return None, run_dir.name
+            return None, run_dir.name, None
         vdir = subdirs[0]
 
     tasks_dir = vdir / "tasks"
@@ -582,7 +599,7 @@ def _resolve_trial_events(
     else:
         subdirs = sorted(p for p in tasks_dir.iterdir() if p.is_dir()) if tasks_dir.is_dir() else []
         if not subdirs:
-            return None, f"{run_dir.name} · {vdir.name}"
+            return None, f"{run_dir.name} · {vdir.name}", None
         tkdir = subdirs[0]
 
     trials_dir = tkdir / "trials"
@@ -593,12 +610,17 @@ def _resolve_trial_events(
             sorted(p for p in trials_dir.iterdir() if p.is_dir()) if trials_dir.is_dir() else []
         )
         if not subdirs:
-            return None, f"{run_dir.name} · {vdir.name}/{tkdir.name}"
+            return None, f"{run_dir.name} · {vdir.name}/{tkdir.name}", None
         tdir = subdirs[0]
 
     label = f"{run_dir.name} · {vdir.name}/{tkdir.name}/{tdir.name}"
     events_path = tdir / "events.jsonl"
-    return (events_path if events_path.exists() else None), label
+    otel_path = tdir / "copilot-otel.jsonl"
+    return (
+        events_path if events_path.exists() else None,
+        label,
+        otel_path if otel_path.exists() else None,
+    )
 
 
 def _resolve_pier_job(layout: Layout, *, last: bool, run_id: str | None) -> Path | None:
@@ -717,7 +739,7 @@ def _inspect_pier_job(job_dir: Path) -> None:
         success = "-"
         if rewards:
             success = "yes" if any(float(value) > 0 for value in rewards.values()) else "no"
-        source_path, _label, source_kind = resolve_pier_trial_analysis_source(
+        source_path, _label, source_kind, _otel_path = resolve_pier_trial_analysis_source(
             job_dir, trial_dir.name
         )
         table.add_row(

@@ -12,12 +12,13 @@ Pier configs can refer to the local Copilot agent import path exported as
 
 from __future__ import annotations
 
-from .analysis import analyze_events
+from .analysis import analyze_events, llm_calls_from_otel
 from .models import (
     DryRunCheck,
     DryRunReport,
     Experiment,
     ExperimentRun,
+    LlmCallSummary,
     Metrics,
     ProviderConfig,
     SessionAnalysis,
@@ -37,6 +38,7 @@ __all__ = [
     "DryRunReport",
     "Experiment",
     "ExperimentRun",
+    "LlmCallSummary",
     "Metrics",
     "ProviderConfig",
     "SessionAnalysis",
@@ -51,6 +53,7 @@ __all__ = [
     "analyze_events",
     "discover_pier_job_configs",
     "dry_run_experiment",
+    "llm_calls_from_otel",
     "run_pier_job",
     "run_experiment",
     "run",
