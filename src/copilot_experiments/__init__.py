@@ -13,6 +13,13 @@ Pier configs can refer to the local Copilot agent import path exported as
 from __future__ import annotations
 
 from .analysis import analyze_events, llm_calls_from_otel
+from .deepswe import (
+    DeepSweImportError,
+    DeepSweImportResult,
+    DeepSweSource,
+    discover_deepswe_source,
+    write_deepswe_job_config,
+)
 from .models import (
     DryRunCheck,
     DryRunReport,
@@ -36,6 +43,9 @@ from .runner import dry_run_experiment, run_experiment
 __all__ = [
     "DryRunCheck",
     "DryRunReport",
+    "DeepSweImportError",
+    "DeepSweImportResult",
+    "DeepSweSource",
     "Experiment",
     "ExperimentRun",
     "LlmCallSummary",
@@ -51,11 +61,13 @@ __all__ = [
     "VariantResult",
     "COPILOT_CLI_AGENT_IMPORT_PATH",
     "analyze_events",
+    "discover_deepswe_source",
     "discover_pier_job_configs",
     "dry_run_experiment",
     "llm_calls_from_otel",
     "run_pier_job",
     "run_experiment",
+    "write_deepswe_job_config",
     "run",
 ]
 
