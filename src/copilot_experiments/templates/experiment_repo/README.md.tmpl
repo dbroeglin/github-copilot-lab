@@ -15,6 +15,34 @@ results/            # derived SQLite index for queries (gitignored)
 
 ## Usage
 
+The quickest way to use an unpublished local checkout of the harness is `uvx --from`. Set the
+environment variable to the path of your `github-copilot-lab` checkout, then run the CLI from this
+experiment repo:
+
+```bash
+export COPILOT_EXPERIMENTS_REPO=/path/to/github-copilot-lab
+
+# validate Pier job configs without starting Docker or spending credits
+uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments run --dry-run
+
+# run for real through Pier (requires Copilot auth and a supported Pier backend)
+uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments run
+uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments show --last
+
+# explore results
+uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments list
+uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments inspect <job-name> --trial 1
+uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments analyze <job-name> --trial 1
+```
+
+In PowerShell, use
+`$env:COPILOT_EXPERIMENTS_REPO = "C:\path\to\github-copilot-lab"` and pass
+`--from $env:COPILOT_EXPERIMENTS_REPO`. If you are iterating on the harness and need to force uv
+to rebuild from the working tree, add `--no-cache` before `--from`.
+
+If you prefer to install the harness into this repo's virtual environment, use the normal uv
+workflow:
+
 ```bash
 uv sync
 

@@ -143,6 +143,24 @@ uv run copilot-experiments show --last
 uv run copilot-experiments analyze --last --trial 1
 ```
 
+If you are working from a standalone experiment repo and want to use a local checkout of the
+`copilot-experiments` tool, replace `uv run copilot-experiments ...` with the form
+`uvx --from <tool-repo> copilot-experiments ...`:
+
+```bash
+export COPILOT_EXPERIMENTS_REPO=/path/to/github-copilot-lab
+
+uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments run --dry-run
+uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments run
+uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments show --last
+uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments analyze --last --trial 1
+```
+
+In PowerShell, use
+`$env:COPILOT_EXPERIMENTS_REPO = "C:\path\to\github-copilot-lab"` and pass
+`--from $env:COPILOT_EXPERIMENTS_REPO`. If you are iterating on the tool and need to force uv to
+rebuild from the working tree, add `--no-cache` before `--from`.
+
 `--dry-run` validates Pier configs and path normalization without starting a sandbox. The legacy
 Python experiment path still has an ephemeral mock dry-run, but Pier is the primary authoring
 model.
