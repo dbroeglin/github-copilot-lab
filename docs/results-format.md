@@ -3,6 +3,9 @@
 For new runs, Pier job directories under `jobs/` are the filesystem source of truth. The SQLite
 database under `results/index.db` is a derived cache.
 
+For a source-by-source explanation of what can be captured around a Copilot CLI run, see
+[Collecting data from a Copilot CLI run](collecting-run-data.md).
+
 ## Pier job layout
 
 ```
@@ -43,6 +46,11 @@ download. `copilot-experiments` derives summaries and indexes from that tree.
 | `verifier/reward.txt` / `.json` | Pier verifier reward. Positive reward means solved. |
 | `summary.json` / `summary.md` | Derived summary in the familiar variant/task aggregate shape. |
 
+Pier jobs do not persist per-trial `metrics.json` or `analysis.json` files. Those views are
+derived from `agent/copilot-session/**/events.jsonl` (or `agent/trajectory.json` as a fallback)
+when `show`, `analyze`, `inspect`, or `reindex` runs. Legacy Python runs still keep those files in
+their `results/<experiment>/<run>/.../trials/<NNN>/` layout.
+
 ## Summary shape
 
 `summary.json` contains:
@@ -77,5 +85,6 @@ uv run copilot-experiments analyze <job-name> --trial 1
 uv run copilot-experiments analyze --file jobs/<job>/<trial>/agent/copilot-session/.../events.jsonl
 ```
 
-If the selected Pier trial has no native Copilot `events.jsonl`, `analyze` reports that no
-Copilot session log is available; `show` can still report success/reward and ATIF fallback totals.
+If the selected Pier trial has no native Copilot `events.jsonl`, `analyze` falls back to
+`agent/trajectory.json` when present; otherwise it reports that no Copilot session log or
+trajectory is available.

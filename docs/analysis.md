@@ -1,17 +1,24 @@
 # Session-log analysis
 
 After a Pier trial runs with the local `copilot-cli` agent, the job output keeps the native
-Copilot CLI **session log** (`agent/copilot-session/**/events.jsonl`) and derives two things from
-it:
+Copilot CLI **session log** (`agent/copilot-session/**/events.jsonl`). `copilot-experiments`
+derives two views from that raw log:
 
-- **`metrics.json`** — a few flat counters used for aggregation and the SQLite index.
-- **`analysis.json`** — a richer, structured overview of *what happened* in the session.
+- **Flat metrics** — counters used for `summary.json`, `show`, and the SQLite index.
+- **`SessionAnalysis`** — a richer, structured overview of *what happened* in the session,
+  rendered by `analyze`.
+
+Legacy Python runs also persist these views as per-trial `metrics.json` and `analysis.json`; Pier
+runs derive them from the canonical job artifacts on demand.
 
 This page covers the second one and the `analyze` command that renders it.
 
 > Why a session log at all, and why split data from rendering? See
 > [ADR-0004](adr/0004-session-log-is-primary-data-source.md) and
 > [ADR-0006](adr/0006-separate-analysis-data-from-rendering.md).
+> For the broader collection playbook, including raw `events.jsonl`, stdout,
+> `--share`, debug logs, workspace diffs, verification output, and OpenTelemetry,
+> see [Collecting data from a Copilot CLI run](collecting-run-data.md).
 
 ## The `analyze` command
 
@@ -81,7 +88,7 @@ Warnings, if any, are shown in a panel at the bottom.
 
 `analyze_events(events) -> SessionAnalysis` ([`analysis.py`](../src/copilot_experiments/analysis.py))
 produces plain pydantic data (no formatting), so the same object backs the CLI renderer, the
-stored `analysis.json`, and any future consumer.
+legacy `analysis.json`, and any future consumer.
 
 | Field | Meaning |
 | --- | --- |
@@ -156,7 +163,8 @@ deliberately in place:
 
 - `SessionAnalysis` is rendering-agnostic data (ADR-0006), so a web/HTTP layer can serve the
   same model the CLI renders.
-- `analysis.json` is persisted per trial, and the SQLite index ([`docs/results-format.md`](results-format.md))
-  already supports cross-run queries — the two data sources a web explorer would build on.
+- Pier jobs keep raw native session logs plus ATIF trajectories, while the SQLite index
+  ([`docs/results-format.md`](results-format.md)) already supports cross-run queries — the two
+  data sources a web explorer would build on.
 
 When it lands, it will be documented here.

@@ -87,6 +87,7 @@ uv run copilot-experiments analyze --root examples/tracer_bullet --last
 
 - [`docs/architecture.md`](docs/architecture.md) - Pier-first architecture.
 - [`docs/authoring-experiments.md`](docs/authoring-experiments.md) - task and job authoring.
+- [`docs/collecting-run-data.md`](docs/collecting-run-data.md) - everything to collect around a Copilot CLI run, including native `events.jsonl`, Pier artifacts, ATIF, and OTel.
 - [`docs/results-format.md`](docs/results-format.md) - `jobs/` layout and derived index.
 - [`docs/analysis.md`](docs/analysis.md) - native Copilot session analysis.
 - [`docs/byok-and-local-models.md`](docs/byok-and-local-models.md) - provider env for Copilot CLI.
