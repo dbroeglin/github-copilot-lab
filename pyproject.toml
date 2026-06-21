@@ -33,6 +33,7 @@ packages = ["src/copilot_experiments"]
 dev = [
     "pre-commit>=4.0",
     "pytest>=8.0",
+    "pytest-cov>=6.0",
     "ruff>=0.5",
 ]
 
@@ -55,3 +56,16 @@ docstring-code-format = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+[tool.coverage.run]
+branch = true
+source = ["copilot_experiments"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]

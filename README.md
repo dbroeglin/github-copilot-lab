@@ -103,6 +103,7 @@ uv run ruff check --fix .
 uv run ruff format .
 uv run ruff check .
 uv run pytest -q
+uv run pytest --cov=copilot_experiments --cov-report=term-missing:skip-covered
 ```
 
 Install the local hooks once to make Ruff formatting/lint fixes automatic on commit and tests run
@@ -112,5 +113,8 @@ on push:
 uv run pre-commit install --install-hooks
 uv run pre-commit install --hook-type pre-push
 ```
+
+The pre-push hook runs plain pytest for speed. Run the coverage command explicitly when you need
+branch coverage and missing-line details; CI also runs it for every push and pull request.
 
 See [`AGENTS.md`](AGENTS.md) for contributor guidance.

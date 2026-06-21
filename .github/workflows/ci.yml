@@ -43,8 +43,8 @@ jobs:
         run: uv run ruff format --check .
       - name: Lint
         run: uv run ruff check .
-      - name: Run tests
-        run: uv run pytest -q
+      - name: Run tests with coverage
+        run: uv run pytest --cov=copilot_experiments --cov-report=term-missing:skip-covered
       - name: Check installed dependency metadata
         run: uv pip check
 
