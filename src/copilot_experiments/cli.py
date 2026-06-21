@@ -14,6 +14,7 @@ from rich.table import Table
 from ._util import read_json
 from .analysis import analyze_events, analyze_trajectory
 from .auth import AuthError, preflight_github_token
+from .deepswe import DeepSweImportError, write_deepswe_job_config
 from .index import list_runs as index_list_runs
 from .index import reindex as index_reindex
 from .models import DryRunReport, Experiment, ExperimentRun
@@ -134,6 +135,107 @@ def init(
     console.print(f"  cd {directory}")
     console.print("  uv sync")
     console.print("  uv run copilot-experiments run --dry-run")
+
+
+@app.command("deepswe-import")
+def deepswe_import(
+    source: Path = typer.Argument(
+        ...,
+        help="DeepSWE checkout root, tasks directory, or single task directory.",
+    ),
+    root: Path | None = typer.Option(None, "--root", help="Experiment repository root."),
+    job_name: str = typer.Option(
+        "deepswe-copilot",
+        "--job-name",
+        "--name",
+        help="Pier job name and default output filename.",
+    ),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Job config path. Relative paths are resolved from --root.",
+    ),
+    model: str = typer.Option("gpt-5-mini", "--model", help="Copilot model for the agent."),
+    effort: str | None = typer.Option(
+        "medium",
+        "--effort",
+        help="Copilot reasoning effort. Pass an empty string to omit.",
+    ),
+    mode: str | None = typer.Option(None, "--mode", help="Optional Copilot CLI mode."),
+    context_tier: str | None = typer.Option(
+        None,
+        "--context-tier",
+        help="Optional Copilot context tier.",
+    ),
+    environment: str | None = typer.Option(
+        None,
+        "--environment",
+        help="Optional Pier backend type, e.g. docker or modal.",
+    ),
+    n_attempts: int = typer.Option(1, "--n-attempts", help="Attempts per agent/task cell."),
+    n_concurrent_trials: int = typer.Option(
+        1,
+        "--n-concurrent-trials",
+        help="Maximum Pier trial concurrency.",
+    ),
+    task_names: list[str] = typer.Option(
+        [],
+        "--task",
+        help="Task name or glob to include. Repeat for multiple filters.",
+    ),
+    n_tasks: int | None = typer.Option(
+        None,
+        "--n-tasks",
+        help="Maximum number of tasks to include from the DeepSWE corpus.",
+    ),
+    sample_seed: int | None = typer.Option(
+        None,
+        "--sample-seed",
+        help="Deterministic Pier sampling seed used with dataset tasks.",
+    ),
+    jobs_dir: str = typer.Option("jobs", "--jobs-dir", help="Pier jobs directory."),
+    force: bool = typer.Option(False, "--force", help="Overwrite an existing output file."),
+) -> None:
+    """Generate a Pier job config for a cloned DeepSWE task corpus."""
+
+    root = Path(root or Path.cwd())
+    try:
+        result = write_deepswe_job_config(
+            source,
+            root=root,
+            output=output,
+            overwrite=force,
+            job_name=job_name,
+            jobs_dir=jobs_dir,
+            model=model,
+            reasoning_effort=(effort or None),
+            mode=mode,
+            context_tier=context_tier,
+            environment=environment,
+            n_attempts=n_attempts,
+            n_concurrent_trials=n_concurrent_trials,
+            task_names=task_names or None,
+            n_tasks=n_tasks,
+            sample_seed=sample_seed,
+        )
+    except DeepSweImportError as exc:
+        err.print(f"[red]DeepSWE import error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    display_path = (
+        result.path.relative_to(root.resolve())
+        if result.path.is_relative_to(root.resolve())
+        else result.path
+    )
+    task_label = "task" if result.source.task_count == 1 else "tasks"
+    source_label = "single task" if result.source.kind == "task" else "task corpus"
+    console.print(f"[green]Wrote[/green] {display_path}")
+    console.print(
+        f"[dim]source:[/dim] {result.source.path} "
+        f"({source_label}, {result.source.task_count} {task_label})"
+    )
+    console.print("[dim]validate:[/dim] uv run copilot-experiments run --dry-run")
 
 
 @app.command()

@@ -74,6 +74,7 @@ uv run copilot-experiments analyze --root examples/tracer_bullet --last
 | Command | Description |
 | --- | --- |
 | `init <dir>` | Scaffold a standalone Pier experiment repository. |
+| `deepswe-import <path>` | Generate a Pier job config for a cloned DeepSWE checkout, `tasks/` corpus, or single task. |
 | `run [name]` | Discover Pier job configs in `experiments/` and run them. Reruns create a fresh timestamped Pier job when the configured name already exists. Falls back to legacy Python experiments when no Pier configs exist. |
 | `run --dry-run` | Validate Pier job configs, or run the legacy ephemeral mock dry-run for legacy experiments. |
 | `run --resume` | Resume an existing Pier job directory and skip already-completed matching trials. |
@@ -87,6 +88,7 @@ uv run copilot-experiments analyze --root examples/tracer_bullet --last
 
 - [`docs/architecture.md`](docs/architecture.md) - Pier-first architecture.
 - [`docs/authoring-experiments.md`](docs/authoring-experiments.md) - task and job authoring.
+- [`docs/deepswe.md`](docs/deepswe.md) - importing and running DeepSWE tasks through Pier.
 - [`docs/collecting-run-data.md`](docs/collecting-run-data.md) - everything to collect around a Copilot CLI run, including native `events.jsonl`, Pier artifacts, ATIF, and OTel.
 - [`docs/results-format.md`](docs/results-format.md) - `jobs/` layout and derived index.
 - [`docs/analysis.md`](docs/analysis.md) - native Copilot session analysis.

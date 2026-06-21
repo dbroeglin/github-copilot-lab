@@ -33,3 +33,4 @@ We follow the lightweight format popularized by
 | [0014](0014-swebench-task-source-and-docker-grading.md) | SWE-bench as a task source with decoupled Docker grading | Superseded by ADR-0016 |
 | [0015](0015-adopt-pier-for-sandboxed-agent-evals.md) | Adopt Pier for sandboxed agent evaluations | Accepted |
 | [0016](0016-use-deepswe-for-large-benchmark-protocols.md) | Use DeepSWE for large benchmark protocols | Accepted |
+| [0017](0017-import-deepswe-as-pier-dataset.md) | Import DeepSWE as a Pier dataset config | Accepted |

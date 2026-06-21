@@ -18,6 +18,10 @@ results/            # derived SQLite index for queries (gitignored)
 ```bash
 uv sync
 
+# optional: generate a Pier job config for a cloned DeepSWE checkout
+git clone https://github.com/datacurve-ai/deep-swe vendor/deep-swe
+uv run copilot-experiments deepswe-import vendor/deep-swe --n-tasks 3 --sample-seed 0
+
 # validate Pier job configs without starting Docker or spending credits
 uv run copilot-experiments run --dry-run
 
