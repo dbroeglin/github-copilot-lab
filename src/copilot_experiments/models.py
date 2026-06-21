@@ -332,6 +332,29 @@ class ToolStat(BaseModel):
     total_result_chars: int = 0
 
 
+class LlmCallSummary(BaseModel):
+    """One LLM request reconstructed from Copilot OTel ``chat <model>`` spans."""
+
+    turn_id: str | None = None
+    started_at: str | None = None
+    ended_at: str | None = None
+    duration_s: float | None = None
+    request_model: str | None = None
+    response_model: str | None = None
+    response_id: str | None = None
+    finish_reasons: list[str] = Field(default_factory=list)
+    input_tokens: int | None = None
+    cache_creation_input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+    aiu: float | None = None
+    server_duration_ms: int | None = None
+    current_tokens: int | None = None
+    token_limit: int | None = None
+    interaction_id: str | None = None
+    service_request_id: str | None = None
+
+
 class TurnSummary(BaseModel):
     """One assistant turn (``assistant.turn_start`` .. ``assistant.turn_end``)."""
 
@@ -344,6 +367,10 @@ class TurnSummary(BaseModel):
     text_preview: str | None = None
     tools: list[str] = Field(default_factory=list)
     output_tokens: int | None = None
+    input_tokens: int | None = None
+    cache_creation_input_tokens: int | None = None
+    aiu: float | None = None
+    api_duration_ms: int | None = None
 
 
 class PhaseStat(BaseModel):
@@ -352,10 +379,10 @@ class PhaseStat(BaseModel):
     The session's turns are split into five contiguous, near-equal groups
     (early -> later), echoing the phase-level analysis in Bai et al. (the paper's
     Finding #6: context construction dominates early phases, generation later
-    ones). Only per-turn signals the Copilot log exposes reliably are aggregated:
-    output tokens, tool activity, and duration. Per-phase *input*/cache/cost are
-    intentionally omitted because Copilot reports those only as session totals
-    (``session.shutdown``), never per turn -- see ``docs/analysis.md``.
+    ones). Only native per-turn signals are aggregated: output tokens, tool
+    activity, and duration. Per-phase *input*/cache/cost are intentionally
+    omitted; OTel can provide per-call economics, but phase-level attribution is
+    kept separate from native event analysis -- see ``docs/analysis.md``.
     """
 
     name: str
@@ -407,6 +434,7 @@ class SessionAnalysis(BaseModel):
 
     # Breakdowns.
     tools: list[ToolStat] = Field(default_factory=list)
+    llm_calls: list[LlmCallSummary] = Field(default_factory=list)
     turns: list[TurnSummary] = Field(default_factory=list)
     phases: list[PhaseStat] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

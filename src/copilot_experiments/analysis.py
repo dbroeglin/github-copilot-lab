@@ -25,7 +25,8 @@ from __future__ import annotations
 import datetime as _dt
 from typing import Any
 
-from .models import PhaseStat, SessionAnalysis, ToolStat, TurnSummary
+from . import pricing
+from .models import LlmCallSummary, PhaseStat, SessionAnalysis, ToolStat, TurnSummary
 from .sessionlog import extract_economics
 
 _PREVIEW_LEN = 120
@@ -107,7 +108,9 @@ def _add_model(models: list[str], model: Any) -> None:
         models.append(model)
 
 
-def analyze_events(events: list[dict[str, Any]]) -> SessionAnalysis:
+def analyze_events(
+    events: list[dict[str, Any]], otel_records: list[dict[str, Any]] | None = None
+) -> SessionAnalysis:
     """Reconstruct a :class:`SessionAnalysis` from a list of session events."""
     analysis = SessionAnalysis()
     models: list[str] = []
@@ -248,7 +251,262 @@ def analyze_events(events: list[dict[str, Any]]) -> SessionAnalysis:
         analysis.finished_at = last.isoformat().replace("+00:00", "Z")
         analysis.duration_s = round((last - first).total_seconds(), 3)
 
+    if otel_records:
+        _apply_otel_records(analysis, otel_records)
+
     return analysis
+
+
+def _apply_otel_records(analysis: SessionAnalysis, records: list[dict[str, Any]]) -> None:
+    calls = _llm_calls_from_otel(records)
+    if not calls:
+        return
+
+    analysis.llm_calls = calls
+    turns_by_id = {turn.turn_id: turn for turn in analysis.turns if turn.turn_id is not None}
+    for call in calls:
+        if call.turn_id is None:
+            continue
+        turn = turns_by_id.get(str(call.turn_id))
+        if turn is None:
+            continue
+        _add_turn_int(turn, "input_tokens", call.input_tokens)
+        _add_turn_int(turn, "cache_creation_input_tokens", call.cache_creation_input_tokens)
+        if turn.output_tokens is None:
+            _add_turn_int(turn, "output_tokens", call.output_tokens)
+        _add_turn_float(turn, "aiu", call.aiu)
+        _add_turn_int(turn, "api_duration_ms", call.server_duration_ms)
+
+    # If a native shutdown exists, it remains authoritative for aggregate economics. If not, OTel
+    # still lets direct-file analyses recover useful totals from chat spans.
+    if analysis.economics.total_tokens is not None:
+        return
+
+    input_tokens = _sum_int(call.input_tokens for call in calls)
+    cache_creation_tokens = _sum_int(call.cache_creation_input_tokens for call in calls)
+    output_tokens = _sum_int(call.output_tokens for call in calls)
+    api_duration_ms = _sum_int(call.server_duration_ms for call in calls)
+    aiu = _sum_float(call.aiu for call in calls)
+
+    if input_tokens is not None:
+        analysis.input_tokens = input_tokens
+        analysis.economics.input_tokens_total = input_tokens
+    if cache_creation_tokens is not None:
+        analysis.economics.cache_write_tokens = cache_creation_tokens
+    if output_tokens is not None:
+        analysis.output_tokens = output_tokens
+        analysis.economics.output_tokens = output_tokens
+    if input_tokens is not None or output_tokens is not None:
+        total = (input_tokens or 0) + (output_tokens or 0)
+        analysis.total_tokens = total
+        analysis.economics.total_tokens = total
+    if aiu is not None:
+        analysis.economics.aiu = round(aiu, 6)
+    if api_duration_ms is not None:
+        analysis.economics.api_duration_ms = api_duration_ms
+    analysis.economics.n_requests = len(calls)
+
+
+def _llm_calls_from_otel(records: list[dict[str, Any]]) -> list[LlmCallSummary]:
+    calls: list[LlmCallSummary] = []
+    for record in records:
+        if record.get("type") != "span":
+            continue
+        name = str(record.get("name") or "")
+        attrs = _otel_attrs(record.get("attributes"))
+        if attrs.get("gen_ai.operation.name") != "chat" and not name.startswith("chat "):
+            continue
+
+        start = _parse_otel_time(record.get("startTime") or record.get("startTimeUnixNano"))
+        end = _parse_otel_time(record.get("endTime") or record.get("endTimeUnixNano"))
+        duration = round((end - start).total_seconds(), 3) if start and end else None
+        usage_info = _chat_usage_event(record.get("events"))
+        nano_aiu = _otel_number(attrs.get("github.copilot.nano_aiu"))
+        input_tokens = _otel_int(attrs.get("gen_ai.usage.input_tokens"))
+        output_tokens = _otel_int(attrs.get("gen_ai.usage.output_tokens"))
+
+        calls.append(
+            LlmCallSummary(
+                turn_id=_otel_string(attrs.get("github.copilot.turn_id")),
+                started_at=_iso_z(start),
+                ended_at=_iso_z(end),
+                duration_s=duration,
+                request_model=_string_or_none(attrs.get("gen_ai.request.model")),
+                response_model=_string_or_none(attrs.get("gen_ai.response.model"))
+                or _model_from_span_name(name),
+                response_id=_otel_string(attrs.get("gen_ai.response.id")),
+                finish_reasons=_strings(attrs.get("gen_ai.response.finish_reasons")),
+                input_tokens=input_tokens,
+                cache_creation_input_tokens=_otel_int(
+                    attrs.get("gen_ai.usage.cache_creation_input_tokens")
+                ),
+                output_tokens=output_tokens,
+                total_tokens=(
+                    (input_tokens or 0) + (output_tokens or 0)
+                    if input_tokens is not None or output_tokens is not None
+                    else None
+                ),
+                aiu=pricing.to_aiu(nano_aiu),
+                server_duration_ms=_otel_int(attrs.get("github.copilot.server_duration")),
+                current_tokens=_otel_int(usage_info.get("github.copilot.current_tokens")),
+                token_limit=_otel_int(usage_info.get("github.copilot.token_limit")),
+                interaction_id=_otel_string(attrs.get("github.copilot.interaction_id")),
+                service_request_id=_otel_string(attrs.get("github.copilot.service_request_id")),
+            )
+        )
+    return calls
+
+
+def _chat_usage_event(events: Any) -> dict[str, Any]:
+    if not isinstance(events, list):
+        return {}
+    for event in events:
+        if not isinstance(event, dict) or event.get("name") != "github.copilot.session.usage_info":
+            continue
+        return _otel_attrs(event.get("attributes"))
+    return {}
+
+
+def _otel_attrs(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return {str(k): _otel_value(v) for k, v in raw.items()}
+    if isinstance(raw, list):
+        attrs: dict[str, Any] = {}
+        for item in raw:
+            if isinstance(item, dict) and item.get("key") is not None:
+                attrs[str(item["key"])] = _otel_value(item.get("value"))
+        return attrs
+    return {}
+
+
+def _otel_value(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    for key in ("stringValue", "intValue", "doubleValue", "boolValue"):
+        if key in value:
+            return value[key]
+    if "arrayValue" in value:
+        values = (value["arrayValue"] or {}).get("values") or []
+        return [_otel_value(v) for v in values]
+    if "kvlistValue" in value:
+        entries = (value["kvlistValue"] or {}).get("values") or []
+        return _otel_attrs(entries)
+    return value
+
+
+def _parse_otel_time(value: Any) -> _dt.datetime | None:
+    value = _otel_value(value)
+    if isinstance(value, str):
+        try:
+            return _dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            try:
+                return _parse_otel_time(float(value))
+            except ValueError:
+                return None
+    if isinstance(value, (list, tuple)) and len(value) >= 2:
+        try:
+            seconds = int(value[0])
+            nanos = int(value[1])
+        except (TypeError, ValueError):
+            return None
+        return _dt.datetime.fromtimestamp(seconds, tz=_dt.UTC) + _dt.timedelta(
+            microseconds=nanos / 1000
+        )
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        seconds = float(value)
+        if seconds > 1_000_000_000_000_000:
+            seconds /= 1_000_000_000
+        elif seconds > 1_000_000_000_000:
+            seconds /= 1000
+        try:
+            return _dt.datetime.fromtimestamp(seconds, tz=_dt.UTC)
+        except (OverflowError, OSError, ValueError):
+            return None
+    return None
+
+
+def _iso_z(value: _dt.datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.astimezone(_dt.UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _otel_number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _otel_int(value: Any) -> int | None:
+    number = _otel_number(value)
+    return int(number) if number is not None else None
+
+
+def _strings(value: Any) -> list[str]:
+    value = _otel_value(value)
+    if isinstance(value, list):
+        return [str(item) for item in value if item not in (None, "")]
+    if isinstance(value, str) and value:
+        return [value]
+    return []
+
+
+def _otel_string(value: Any) -> str | None:
+    value = _otel_value(value)
+    if value in (None, ""):
+        return None
+    if isinstance(value, (str, int, float)):
+        return str(value)
+    return None
+
+
+def _model_from_span_name(name: str) -> str | None:
+    prefix = "chat "
+    return name[len(prefix) :] if name.startswith(prefix) and len(name) > len(prefix) else None
+
+
+def _sum_int(values: Any) -> int | None:
+    total = 0
+    seen = False
+    for value in values:
+        if value is None:
+            continue
+        total += int(value)
+        seen = True
+    return total if seen else None
+
+
+def _sum_float(values: Any) -> float | None:
+    total = 0.0
+    seen = False
+    for value in values:
+        if value is None:
+            continue
+        total += float(value)
+        seen = True
+    return total if seen else None
+
+
+def _add_turn_int(turn: TurnSummary, field: str, value: int | None) -> None:
+    if value is None:
+        return
+    current = getattr(turn, field)
+    setattr(turn, field, value if current is None else current + value)
+
+
+def _add_turn_float(turn: TurnSummary, field: str, value: float | None) -> None:
+    if value is None:
+        return
+    current = getattr(turn, field)
+    setattr(turn, field, value if current is None else round(current + value, 6))
 
 
 def analyze_trajectory(trajectory: dict[str, Any]) -> SessionAnalysis:

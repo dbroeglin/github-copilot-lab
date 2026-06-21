@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from ._util import read_json, write_json, write_text
 from .analysis import analyze_trajectory
-from .pier_agents.copilot_cli import find_copilot_session_events
+from .pier_agents.copilot_cli import find_copilot_otel_file, find_copilot_session_events
 from .report import summary_markdown
 from .sessionlog import load_events, parse_metrics
 
@@ -122,20 +122,21 @@ def resolve_pier_trial_events(
 
 def resolve_pier_trial_analysis_source(
     job_dir: Path, trial: int | str | None = None
-) -> tuple[Path | None, str, AnalysisSource | None]:
+) -> tuple[Path | None, str, AnalysisSource | None, Path | None]:
     trial_dir = _resolve_trial_dir(job_dir, trial)
     if trial_dir is None:
-        return None, Path(job_dir).name, None
+        return None, Path(job_dir).name, None, None
 
     label = f"{Path(job_dir).name} · {trial_dir.name}"
-    events = find_copilot_session_events(trial_dir / "agent")
+    agent_dir = trial_dir / "agent"
+    events = find_copilot_session_events(agent_dir)
     if events is not None:
-        return events, label, "events"
+        return events, label, "events", find_copilot_otel_file(agent_dir)
 
-    trajectory = trial_dir / "agent" / "trajectory.json"
+    trajectory = agent_dir / "trajectory.json"
     if trajectory.exists():
-        return trajectory, label, "trajectory"
-    return None, label, None
+        return trajectory, label, "trajectory", None
+    return None, label, None, None
 
 
 def _resolve_trial_dir(job_dir: Path, trial: int | str | None = None) -> Path | None:

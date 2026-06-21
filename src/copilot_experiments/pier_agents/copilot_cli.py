@@ -40,6 +40,7 @@ class CopilotCli(BaseInstalledAgent):
 
     _JSONL_FILENAME = "copilot-cli.jsonl"
     _OUTPUT_FILENAME = "copilot-cli.txt"
+    _OTEL_FILENAME = "copilot-otel.jsonl"
     _SESSION_ROOT = EnvironmentPaths.agent_dir / "copilot-session"
     _RE_VERSION = re.compile(r"(\d+\.\d+(?:\.\d+)?)")
 
@@ -74,10 +75,12 @@ class CopilotCli(BaseInstalledAgent):
         *args: Any,
         command_model_name: str | None = None,
         extra_args: str | list[str] | None = None,
+        otel_file_export: bool = True,
         **kwargs: Any,
     ) -> None:
         self._command_model_name = command_model_name
         self._extra_args = extra_args
+        self._otel_file_export = otel_file_export
         super().__init__(*args, **kwargs)
 
     @staticmethod
@@ -211,6 +214,7 @@ class CopilotCli(BaseInstalledAgent):
         flag_text = " ".join(flag for flag in flags if flag)
 
         env = self.build_process_env(self._copilot_auth_env())
+        self._configure_otel_env(env, session_id)
         agent_dir = EnvironmentPaths.agent_dir.as_posix()
         session_root = self._SESSION_ROOT.as_posix()
         jsonl_path = (EnvironmentPaths.agent_dir / self._JSONL_FILENAME).as_posix()
@@ -235,6 +239,25 @@ class CopilotCli(BaseInstalledAgent):
             output_path=output_path,
         )
         await self.exec_as_agent(environment, command=command, env=env)
+
+    def _configure_otel_env(self, env: dict[str, str | None], session_id: str) -> None:
+        otel_active = _otel_env_active(env)
+        if self._otel_file_export and not _otel_destination_configured(env):
+            env["COPILOT_OTEL_FILE_EXPORTER_PATH"] = (
+                EnvironmentPaths.agent_dir / self._OTEL_FILENAME
+            ).as_posix()
+            otel_active = True
+        if not otel_active:
+            return
+        env.setdefault("COPILOT_OTEL_SOURCE_NAME", "copilot-experiments")
+        env.setdefault("OTEL_SERVICE_NAME", "copilot-experiments")
+        _append_otel_resource_attributes(
+            env,
+            {
+                "copilot.session_id": session_id,
+                "copilot.agent": self.name(),
+            },
+        )
 
     def _build_run_command(
         self,
@@ -464,6 +487,42 @@ def find_copilot_session_events(agent_logs_dir: Path) -> Path | None:
         key=lambda path: path.stat().st_mtime,
     )
     return candidates[-1] if candidates else None
+
+
+def find_copilot_otel_file(agent_logs_dir: Path) -> Path | None:
+    """Find the Copilot OTel file-exporter output captured by this Pier agent."""
+
+    path = agent_logs_dir / CopilotCli._OTEL_FILENAME
+    return path if path.exists() else None
+
+
+def _otel_destination_configured(env: dict[str, str | None]) -> bool:
+    return bool(
+        env.get("COPILOT_OTEL_FILE_EXPORTER_PATH") or env.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+    )
+
+
+def _otel_env_active(env: dict[str, str | None]) -> bool:
+    return bool(
+        env.get("COPILOT_OTEL_ENABLED")
+        or env.get("COPILOT_OTEL_FILE_EXPORTER_PATH")
+        or env.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+    )
+
+
+def _append_otel_resource_attributes(
+    env: dict[str, str | None], attributes: dict[str, str]
+) -> None:
+    existing = env.get("OTEL_RESOURCE_ATTRIBUTES") or ""
+    existing_keys = {
+        part.split("=", 1)[0].strip()
+        for part in existing.split(",")
+        if "=" in part and part.split("=", 1)[0].strip()
+    }
+    additions = [f"{key}={value}" for key, value in attributes.items() if key not in existing_keys]
+    if not additions:
+        return
+    env["OTEL_RESOURCE_ATTRIBUTES"] = ",".join([part for part in (existing, *additions) if part])
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:

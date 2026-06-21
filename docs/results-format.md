@@ -22,6 +22,7 @@ jobs/
         copilot-cli.jsonl
         copilot-cli.txt
         trajectory.json
+        copilot-otel.jsonl   # Copilot OTel file export, when no custom OTLP destination overrides it
         copilot-session/
           <session-id>/
             events.jsonl
@@ -43,6 +44,7 @@ download. `copilot-experiments` derives summaries and indexes from that tree.
 | `agent/trajectory.json` | ATIF trajectory emitted by the installed agent. Used as a fallback for non-Copilot agents. |
 | `agent/copilot-cli.jsonl` / `.txt` | Raw Copilot CLI output streams. Useful for auth or CLI failures. |
 | `agent/copilot-session/**/events.jsonl` | Native Copilot session log. Primary source for Copilot turns, tool calls, tokens, AIU, and analysis. |
+| `agent/copilot-otel.jsonl` | Copilot OTel file-exporter output, captured by default for Copilot agent runs unless custom OTel destination settings override it. Useful for per-LLM-call spans with input/output/cache-write/nano-AIU details. |
 | `verifier/reward.txt` / `.json` | Pier verifier reward. Positive reward means solved. |
 | `summary.json` / `summary.md` | Derived summary in the familiar variant/task aggregate shape. |
 

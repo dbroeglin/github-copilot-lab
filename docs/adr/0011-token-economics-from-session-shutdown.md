@@ -65,3 +65,19 @@ requests on 2026-06-01, and no `totalPremiumRequests` field appears in current l
   input), and rate normalisation can hide small per-model/tier rate drift inside the by-type split
   while keeping the authoritative grand total exact. AIU is GitHub's internal unit; an optional
   `--usd-per-aiu` conversion is left as a thin future presentation layer.
+
+## Follow-up: OTel per-call economics
+
+On 2026-06-21, `copilot help monitoring` and local file-exporter probes with Copilot CLI
+`1.0.64-0` showed an additional optional source: OpenTelemetry `chat <model>` spans carry
+per-LLM-call `gen_ai.usage.input_tokens`, `gen_ai.usage.cache_creation_input_tokens`,
+`gen_ai.usage.output_tokens`, `github.copilot.nano_aiu`, `github.copilot.server_duration`, and
+`github.copilot.turn_id`. In the probes, summing chat spans matched the native
+`session.shutdown` totals for input, cache-write, output, nano-AIU, and API duration.
+
+We integrated this as a complement, not a replacement. The harness now enables local OTel file
+export to `copilot-otel.jsonl` for Copilot agent runs when no explicit OTLP destination is
+configured, and `SessionAnalysis` ingests that file when present to populate a per-call LLM table
+and annotate turns with OTel input/cache-write/output/AIU/API-duration fields. Native
+`events.jsonl` remains the authoritative source for session-level totals and richer forensic
+details; OTel still does not split each call's input into non-cached input versus cache-read tokens.

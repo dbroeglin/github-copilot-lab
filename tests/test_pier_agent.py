@@ -61,3 +61,27 @@ def test_copilot_cli_run_command_copies_native_session_state(tmp_path: Path):
     assert 'session_state="$HOME/.copilot/session-state/1234"' in command
     assert 'cp -a "$session_state" /logs/agent/copilot-session' in command
     assert "exit $status" in command
+
+
+def test_copilot_cli_configures_otel_file_export_by_default(tmp_path: Path):
+    agent = CopilotCli(logs_dir=tmp_path)
+    env: dict[str, str | None] = {}
+
+    agent._configure_otel_env(env, "sess-1")
+
+    assert env["COPILOT_OTEL_FILE_EXPORTER_PATH"] == "/logs/agent/copilot-otel.jsonl"
+    assert env["COPILOT_OTEL_SOURCE_NAME"] == "copilot-experiments"
+    assert env["OTEL_SERVICE_NAME"] == "copilot-experiments"
+    assert "copilot.session_id=sess-1" in (env["OTEL_RESOURCE_ATTRIBUTES"] or "")
+    assert "copilot.agent=copilot-cli" in (env["OTEL_RESOURCE_ATTRIBUTES"] or "")
+
+
+def test_copilot_cli_preserves_explicit_otel_destination(tmp_path: Path):
+    agent = CopilotCli(logs_dir=tmp_path)
+    env: dict[str, str | None] = {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318"}
+
+    agent._configure_otel_env(env, "sess-1")
+
+    assert "COPILOT_OTEL_FILE_EXPORTER_PATH" not in env
+    assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://collector:4318"
+    assert "copilot.session_id=sess-1" in (env["OTEL_RESOURCE_ATTRIBUTES"] or "")

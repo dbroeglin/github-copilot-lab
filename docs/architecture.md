@@ -65,7 +65,9 @@ During normalization, `name: copilot-cli` becomes
   native `events.jsonl` is persisted with the Pier trial;
 - supports model, effort, mode, context tier, MCP config, skills, and extra CLI args through Pier
   agent kwargs;
-- writes raw CLI JSONL/text, ATIF `trajectory.json`, and native Copilot session logs.
+- writes raw CLI JSONL/text, ATIF `trajectory.json`, and native Copilot session logs;
+- writes Copilot OTel file-exporter output to `/logs/agent/copilot-otel.jsonl` by default when no
+  explicit OTLP destination is configured, so `analyze` can show per-LLM-call economics.
 
 ## Design invariants
 

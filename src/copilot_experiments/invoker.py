@@ -216,6 +216,10 @@ class MockInvoker:
             for ev in events:
                 fh.write(json.dumps(ev) + "\n")
 
+        otel_path = inv.env_overrides.get("COPILOT_OTEL_FILE_EXPORTER_PATH")
+        if otel_path:
+            self._write_synthetic_otel(Path(otel_path), events, model)
+
         duration = time.monotonic() - start
         return InvocationResult(exit_code=self.exit_code, duration_s=duration)
 
@@ -347,6 +351,46 @@ class MockInvoker:
 
         events += self._economics_events(model, at, out_total, lines_added, lines_removed)
         return events
+
+    @staticmethod
+    def _write_synthetic_otel(path: Path, events: list[dict], model: str) -> None:
+        """Write minimal OTel file-exporter records for offline analysis tests."""
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        chat_events = [ev for ev in events if ev.get("type") == "assistant.message"]
+        with path.open("w", encoding="utf-8") as fh:
+            for i, ev in enumerate(chat_events):
+                data = ev.get("data") or {}
+                output_tokens = int(data.get("outputTokens") or 0)
+                input_tokens = 1000 + i * 100
+                cache_creation_tokens = 100 + i * 10
+                nano_aiu = 100_000_000 + i * 10_000_000
+                record = {
+                    "type": "span",
+                    "name": f"chat {model}",
+                    "attributes": {
+                        "gen_ai.operation.name": "chat",
+                        "gen_ai.request.model": model,
+                        "gen_ai.response.model": model,
+                        "gen_ai.usage.input_tokens": input_tokens,
+                        "gen_ai.usage.cache_creation_input_tokens": cache_creation_tokens,
+                        "gen_ai.usage.output_tokens": output_tokens,
+                        "github.copilot.nano_aiu": nano_aiu,
+                        "github.copilot.server_duration": 100 + i * 10,
+                        "github.copilot.turn_id": str(data.get("turnId") or i),
+                    },
+                    "events": [
+                        {
+                            "name": "github.copilot.session.usage_info",
+                            "attributes": {
+                                "github.copilot.current_tokens": 5000 + i * 100,
+                                "github.copilot.token_limit": 100000,
+                            },
+                        }
+                    ],
+                    "status": {"code": 0},
+                }
+                fh.write(json.dumps(record) + "\n")
 
     @staticmethod
     def _economics_events(
