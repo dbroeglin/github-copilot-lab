@@ -27,6 +27,11 @@ This repository contains **GitHub Copilot research experiments** built with the
 - Keep code ruff-formatted/linted and add focused tests for behavior changes.
 
 ## Commands
+
+If you are using a local checkout of the unpublished harness, replace
+`uv run copilot-experiments` with
+`uvx --from <path-to-github-copilot-lab> copilot-experiments`.
+
 ```bash
 uv sync
 uv run copilot-experiments run [--dry-run]

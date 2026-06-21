@@ -50,6 +50,25 @@ uv run copilot-experiments show --last
 uv run copilot-experiments analyze --last
 ```
 
+To use a local checkout of this tool from any other directory, run the console script through
+`uvx --from` instead of syncing this repository first:
+
+```bash
+# Use the path to your local github-copilot-lab checkout.
+export COPILOT_EXPERIMENTS_REPO=/path/to/github-copilot-lab
+
+uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments init my-experiments
+cd my-experiments
+uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments run --dry-run
+uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments show --last
+```
+
+In PowerShell, set
+`$env:COPILOT_EXPERIMENTS_REPO = "C:\path\to\github-copilot-lab"` and use
+`uvx --from $env:COPILOT_EXPERIMENTS_REPO copilot-experiments ...`. This installs from the
+current local checkout into uv's cache. If you are iterating on the tool and need to force uv to
+rebuild from the working tree, add `--no-cache` before `--from`.
+
 Real runs require Copilot auth (`COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth
 login`) and a Pier-supported execution backend such as Docker.
 

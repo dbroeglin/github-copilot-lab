@@ -7,6 +7,9 @@ requires-python = ">=3.12"
 dependencies = [
     # The experiment harness. Until published to PyPI, install from git (or replace
     # with a local editable path: `copilot-experiments @ file:///path/to/repo`).
+    # To use an unpublished local checkout without syncing this repo, run:
+    #   uvx --from /path/to/github-copilot-lab copilot-experiments ...
+    # Add --no-cache before --from when iterating on the harness working tree.
     "copilot-experiments @ git+https://github.com/dbroeglin/github-copilot-lab.git",
 ]
 
