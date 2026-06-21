@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 from collections.abc import Callable
@@ -262,6 +263,16 @@ def _run_trial(
         env_overrides: dict[str, str] = {}
         if github_token:
             env_overrides[INJECTED_TOKEN_ENV_VAR] = github_token
+        otel_path = trial_dir / "copilot-otel.jsonl"
+        _configure_otel_env(
+            env_overrides,
+            variant,
+            session_id=session_id,
+            otel_path=otel_path,
+            experiment_slug=experiment.slug,
+            task_slug=task_slug,
+            trial_no=trial_no,
+        )
         inv = Invocation(
             prompt=task.prompt,
             workspace=workspace,
@@ -298,7 +309,8 @@ def _run_trial(
         )
 
         # Build and persist the richer session analysis (timeline, tool histogram).
-        analysis = analyze_events(events)
+        otel_records = load_events(otel_path) if otel_path.exists() else None
+        analysis = analyze_events(events, otel_records)
         write_json(trial_dir / "analysis.json", analysis.model_dump(mode="json"))
 
         # Capture what changed in the workspace.
@@ -369,6 +381,77 @@ def _default_session_state_root() -> Path:
     from .sessionlog import session_state_root
 
     return session_state_root()
+
+
+def _configure_otel_env(
+    env_overrides: dict[str, str],
+    variant: Variant,
+    *,
+    session_id: str,
+    otel_path: Path,
+    experiment_slug: str,
+    task_slug: str,
+    trial_no: int,
+) -> None:
+    if not _otel_destination_configured(env_overrides, variant):
+        env_overrides["COPILOT_OTEL_FILE_EXPORTER_PATH"] = str(otel_path.resolve())
+    if not _otel_env_active(env_overrides, variant):
+        return
+    _setdefault_child_env(env_overrides, variant, "COPILOT_OTEL_SOURCE_NAME", "copilot-experiments")
+    _setdefault_child_env(env_overrides, variant, "OTEL_SERVICE_NAME", "copilot-experiments")
+    _append_otel_resource_attributes(
+        env_overrides,
+        variant,
+        {
+            "copilot.session_id": session_id,
+            "copilot.experiment": experiment_slug,
+            "copilot.variant": variant.slug,
+            "copilot.task": task_slug,
+            "copilot.trial": f"{trial_no:03d}",
+        },
+    )
+
+
+def _env_value(env_overrides: dict[str, str], variant: Variant, name: str) -> str | None:
+    return env_overrides.get(name) or variant.env.get(name) or os.environ.get(name)
+
+
+def _setdefault_child_env(
+    env_overrides: dict[str, str], variant: Variant, name: str, value: str
+) -> None:
+    if _env_value(env_overrides, variant, name) is None:
+        env_overrides[name] = value
+
+
+def _otel_destination_configured(env_overrides: dict[str, str], variant: Variant) -> bool:
+    return bool(
+        _env_value(env_overrides, variant, "COPILOT_OTEL_FILE_EXPORTER_PATH")
+        or _env_value(env_overrides, variant, "OTEL_EXPORTER_OTLP_ENDPOINT")
+    )
+
+
+def _otel_env_active(env_overrides: dict[str, str], variant: Variant) -> bool:
+    return bool(
+        _env_value(env_overrides, variant, "COPILOT_OTEL_ENABLED")
+        or _env_value(env_overrides, variant, "COPILOT_OTEL_FILE_EXPORTER_PATH")
+        or _env_value(env_overrides, variant, "OTEL_EXPORTER_OTLP_ENDPOINT")
+    )
+
+
+def _append_otel_resource_attributes(
+    env_overrides: dict[str, str], variant: Variant, attributes: dict[str, str]
+) -> None:
+    existing = _env_value(env_overrides, variant, "OTEL_RESOURCE_ATTRIBUTES") or ""
+    existing_keys = {
+        part.split("=", 1)[0].strip()
+        for part in existing.split(",")
+        if "=" in part and part.split("=", 1)[0].strip()
+    }
+    additions = [f"{key}={value}" for key, value in attributes.items() if key not in existing_keys]
+    if additions:
+        env_overrides["OTEL_RESOURCE_ATTRIBUTES"] = ",".join(
+            [part for part in (existing, *additions) if part]
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -442,17 +525,27 @@ def _validate_plumbing(
         _check("session log captured", events_path.exists() and n_events >= 1, f"{n_events} events")
     )
 
-    # 3. Metrics parsed from the session log.
+    # 3. OTel file captured for per-call economics.
+    otel_path = trial_dir / "copilot-otel.jsonl"
+    n_otel = 0
+    if otel_path.exists():
+        try:
+            n_otel = len(load_events(otel_path))
+        except Exception:  # pragma: no cover - defensive
+            n_otel = 0
+    checks.append(_check("otel captured", otel_path.exists() and n_otel >= 1, f"{n_otel} records"))
+
+    # 4. Metrics parsed from the session log.
     metrics_path = trial_dir / "metrics.json"
     n_turns = int(read_json(metrics_path).get("n_turns") or 0) if metrics_path.exists() else 0
     checks.append(
         _check("metrics parsed", metrics_path.exists() and n_turns >= 1, f"{n_turns} turns")
     )
 
-    # 4. Session analysis written.
+    # 5. Session analysis written.
     checks.append(_check("analysis written", (trial_dir / "analysis.json").exists()))
 
-    # 5. Workspace diff captured and non-empty -- this is what caught the MAX_PATH bug.
+    # 6. Workspace diff captured and non-empty -- this is what caught the MAX_PATH bug.
     diff_path = trial_dir / "workspace.diff"
     diff = diff_path.read_text(encoding="utf-8") if diff_path.exists() else ""
     checks.append(

@@ -116,6 +116,24 @@ Useful knobs:
 | `n_concurrent_trials` | Pier concurrency. |
 | `artifacts` | Files or directories copied out of the environment after trials. |
 
+## DeepSWE task corpora
+
+DeepSWE tasks already use the Harbor/Pier task format, including separate verifier environments.
+Do not convert them into legacy Python `Task`s. Generate a Pier job config that points at the
+DeepSWE checkout instead:
+
+```bash
+git clone https://github.com/datacurve-ai/deep-swe vendor/deep-swe
+uv run copilot-experiments deepswe-import vendor/deep-swe \
+  --job-name deepswe-smoke \
+  --model gpt-5-mini \
+  --n-tasks 3 \
+  --sample-seed 0
+```
+
+The generated config uses `datasets:` for a corpus and `tasks:` for a single task directory. See
+[`deepswe.md`](deepswe.md) for task selection, scaling, and result-analysis notes.
+
 ## Workflow
 
 ```bash

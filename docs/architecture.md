@@ -14,11 +14,14 @@ flowchart TD
     JOB --> AGENT["installed agent\ncopilot-cli or another Pier agent"]
     AGENT --> CLI["real copilot CLI\n-p --output-format json --session-id --log-dir"]
     CLI --> STATE["~/.copilot/session-state/<id>/events.jsonl"]
+    CLI --> OTEL["/logs/agent/copilot-otel.jsonl"]
     STATE --> EVENTS["/logs/agent/copilot-session/<id>/events.jsonl"]
     AGENT --> ATIF["/logs/agent/trajectory.json"]
+    OTEL --> ATIF
     JOB --> VERIFY["Pier verifier\ntests/test.sh -> reward.txt/json"]
     JOB --> OUT["jobs/<job>/<trial>/"]
     EVENTS --> ANALYSIS["sessionlog.py + analysis.py"]
+    OTEL --> ANALYSIS
     ATIF --> FALLBACK["ATIF fallback metrics"]
     OUT --> SUMMARY["pier_results.py\nsummary.json / summary.md"]
     OUT --> INDEX["index.py\nresults/index.db"]
@@ -65,7 +68,10 @@ During normalization, `name: copilot-cli` becomes
   native `events.jsonl` is persisted with the Pier trial;
 - supports model, effort, mode, context tier, MCP config, skills, and extra CLI args through Pier
   agent kwargs;
-- writes raw CLI JSONL/text, ATIF `trajectory.json`, and native Copilot session logs.
+- writes raw CLI JSONL/text, ATIF `trajectory.json`, and native Copilot session logs;
+- writes Copilot OTel file-exporter output to `/logs/agent/copilot-otel.jsonl` by default when no
+  explicit OTLP destination is configured, so `analyze` can show per-LLM-call economics and
+  `trajectory.json` can annotate matching assistant steps with those per-call metrics.
 
 ## Design invariants
 

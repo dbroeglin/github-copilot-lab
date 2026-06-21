@@ -276,6 +276,27 @@ def test_analysis_populates_economics_and_tool_telemetry():
     assert view.total_result_chars == 500
 
 
+def test_analysis_keeps_shutdown_totals_when_otel_present():
+    otel = [
+        {
+            "type": "span",
+            "name": "chat claude-opus-4.8",
+            "attributes": {
+                "gen_ai.operation.name": "chat",
+                "gen_ai.usage.input_tokens": 999_999,
+                "gen_ai.usage.output_tokens": 999,
+                "github.copilot.nano_aiu": 999_999_999,
+                "github.copilot.turn_id": "0",
+            },
+        }
+    ]
+    a = analyze_events(_session(), otel)
+    assert len(a.llm_calls) == 1
+    assert a.llm_calls[0].input_tokens == 999_999
+    assert a.total_tokens == _INPUT + _CACHE_READ + _CACHE_WRITE + _OUTPUT
+    assert a.economics.aiu == 1.215
+
+
 # --------------------------------------------------------------------------- #
 # report aggregation
 # --------------------------------------------------------------------------- #

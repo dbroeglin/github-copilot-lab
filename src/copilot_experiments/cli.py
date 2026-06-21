@@ -14,6 +14,7 @@ from rich.table import Table
 from ._util import read_json
 from .analysis import analyze_events, analyze_trajectory
 from .auth import AuthError, preflight_github_token
+from .deepswe import DeepSweImportError, write_deepswe_job_config
 from .index import list_runs as index_list_runs
 from .index import reindex as index_reindex
 from .models import DryRunReport, Experiment, ExperimentRun
@@ -134,6 +135,107 @@ def init(
     console.print(f"  cd {directory}")
     console.print("  uv sync")
     console.print("  uv run copilot-experiments run --dry-run")
+
+
+@app.command("deepswe-import")
+def deepswe_import(
+    source: Path = typer.Argument(
+        ...,
+        help="DeepSWE checkout root, tasks directory, or single task directory.",
+    ),
+    root: Path | None = typer.Option(None, "--root", help="Experiment repository root."),
+    job_name: str = typer.Option(
+        "deepswe-copilot",
+        "--job-name",
+        "--name",
+        help="Pier job name and default output filename.",
+    ),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Job config path. Relative paths are resolved from --root.",
+    ),
+    model: str = typer.Option("gpt-5-mini", "--model", help="Copilot model for the agent."),
+    effort: str | None = typer.Option(
+        "medium",
+        "--effort",
+        help="Copilot reasoning effort. Pass an empty string to omit.",
+    ),
+    mode: str | None = typer.Option(None, "--mode", help="Optional Copilot CLI mode."),
+    context_tier: str | None = typer.Option(
+        None,
+        "--context-tier",
+        help="Optional Copilot context tier.",
+    ),
+    environment: str | None = typer.Option(
+        None,
+        "--environment",
+        help="Optional Pier backend type, e.g. docker or modal.",
+    ),
+    n_attempts: int = typer.Option(1, "--n-attempts", help="Attempts per agent/task cell."),
+    n_concurrent_trials: int = typer.Option(
+        1,
+        "--n-concurrent-trials",
+        help="Maximum Pier trial concurrency.",
+    ),
+    task_names: list[str] = typer.Option(
+        [],
+        "--task",
+        help="Task name or glob to include. Repeat for multiple filters.",
+    ),
+    n_tasks: int | None = typer.Option(
+        None,
+        "--n-tasks",
+        help="Maximum number of tasks to include from the DeepSWE corpus.",
+    ),
+    sample_seed: int | None = typer.Option(
+        None,
+        "--sample-seed",
+        help="Deterministic Pier sampling seed used with dataset tasks.",
+    ),
+    jobs_dir: str = typer.Option("jobs", "--jobs-dir", help="Pier jobs directory."),
+    force: bool = typer.Option(False, "--force", help="Overwrite an existing output file."),
+) -> None:
+    """Generate a Pier job config for a cloned DeepSWE task corpus."""
+
+    root = Path(root or Path.cwd())
+    try:
+        result = write_deepswe_job_config(
+            source,
+            root=root,
+            output=output,
+            overwrite=force,
+            job_name=job_name,
+            jobs_dir=jobs_dir,
+            model=model,
+            reasoning_effort=(effort or None),
+            mode=mode,
+            context_tier=context_tier,
+            environment=environment,
+            n_attempts=n_attempts,
+            n_concurrent_trials=n_concurrent_trials,
+            task_names=task_names or None,
+            n_tasks=n_tasks,
+            sample_seed=sample_seed,
+        )
+    except DeepSweImportError as exc:
+        err.print(f"[red]DeepSWE import error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    display_path = (
+        result.path.relative_to(root.resolve())
+        if result.path.is_relative_to(root.resolve())
+        else result.path
+    )
+    task_label = "task" if result.source.task_count == 1 else "tasks"
+    source_label = "single task" if result.source.kind == "task" else "task corpus"
+    console.print(f"[green]Wrote[/green] {display_path}")
+    console.print(
+        f"[dim]source:[/dim] {result.source.path} "
+        f"({source_label}, {result.source.task_count} {task_label})"
+    )
+    console.print("[dim]validate:[/dim] uv run copilot-experiments run --dry-run")
 
 
 @app.command()
@@ -497,6 +599,9 @@ def analyze(
     file: Path | None = typer.Option(
         None, "--file", help="Analyze an events.jsonl file directly (ignores run/variant/trial)."
     ),
+    otel_file: Path | None = typer.Option(
+        None, "--otel-file", help="Optional Copilot OTel JSONL file to enrich analysis."
+    ),
     last: bool = typer.Option(False, "--last", help="Analyze the most recent run."),
     max_turns: int = typer.Option(0, "--max-turns", help="Limit timeline rows (0 = all)."),
     root: Path | None = typer.Option(None, "--root", help="Experiment repository root."),
@@ -507,8 +612,9 @@ def analyze(
         if not events:
             err.print(f"[red]No events found in[/red] {file}")
             raise typer.Exit(1)
+        otel_records = load_events(otel_file) if otel_file is not None else None
         render_session_analysis(
-            analyze_events(events), console, title=file.name, max_turns=max_turns
+            analyze_events(events, otel_records), console, title=file.name, max_turns=max_turns
         )
         return
 
@@ -522,12 +628,18 @@ def analyze(
     )
     if run_dir is None:
         if pier_job is not None:
-            source_path, label, source_kind = resolve_pier_trial_analysis_source(pier_job, trial)
+            source_path, label, source_kind, discovered_otel = resolve_pier_trial_analysis_source(
+                pier_job, trial
+            )
             if source_path is None:
                 err.print(f"[red]No Copilot session log or trajectory found in[/red] {pier_job}")
                 raise typer.Exit(1)
+            selected_otel = otel_file or discovered_otel
             analysis = (
-                analyze_events(load_events(source_path))
+                analyze_events(
+                    load_events(source_path),
+                    load_events(selected_otel) if selected_otel is not None else None,
+                )
                 if source_kind == "events"
                 else analyze_trajectory(read_json(source_path))
             )
@@ -537,13 +649,20 @@ def analyze(
         err.print("[red]Run not found.[/red] Pass a run id, --last, or --file.")
         raise typer.Exit(1)
 
-    events_path, label = _resolve_trial_events(run_dir, variant, task, trial)
+    events_path, label, discovered_otel = _resolve_trial_events(run_dir, variant, task, trial)
     if events_path is None:
         err.print(f"[red]No trial session log found in[/red] {run_dir}")
         raise typer.Exit(1)
 
+    selected_otel = otel_file or discovered_otel
     render_session_analysis(
-        analyze_events(load_events(events_path)), console, title=label, max_turns=max_turns
+        analyze_events(
+            load_events(events_path),
+            load_events(selected_otel) if selected_otel is not None else None,
+        ),
+        console,
+        title=label,
+        max_turns=max_turns,
     )
 
 
@@ -563,7 +682,7 @@ def reindex(
 # --------------------------------------------------------------------------- #
 def _resolve_trial_events(
     run_dir: Path, variant: str | None, task: str | None, trial: int | None
-) -> tuple[Path | None, str]:
+) -> tuple[Path | None, str, Path | None]:
     """Locate a trial's ``events.jsonl``, defaulting to the first variant/task/trial."""
     variants_dir = run_dir / "variants"
     if variant is not None:
@@ -573,7 +692,7 @@ def _resolve_trial_events(
             sorted(p for p in variants_dir.iterdir() if p.is_dir()) if variants_dir.is_dir() else []
         )
         if not subdirs:
-            return None, run_dir.name
+            return None, run_dir.name, None
         vdir = subdirs[0]
 
     tasks_dir = vdir / "tasks"
@@ -582,7 +701,7 @@ def _resolve_trial_events(
     else:
         subdirs = sorted(p for p in tasks_dir.iterdir() if p.is_dir()) if tasks_dir.is_dir() else []
         if not subdirs:
-            return None, f"{run_dir.name} · {vdir.name}"
+            return None, f"{run_dir.name} · {vdir.name}", None
         tkdir = subdirs[0]
 
     trials_dir = tkdir / "trials"
@@ -593,12 +712,17 @@ def _resolve_trial_events(
             sorted(p for p in trials_dir.iterdir() if p.is_dir()) if trials_dir.is_dir() else []
         )
         if not subdirs:
-            return None, f"{run_dir.name} · {vdir.name}/{tkdir.name}"
+            return None, f"{run_dir.name} · {vdir.name}/{tkdir.name}", None
         tdir = subdirs[0]
 
     label = f"{run_dir.name} · {vdir.name}/{tkdir.name}/{tdir.name}"
     events_path = tdir / "events.jsonl"
-    return (events_path if events_path.exists() else None), label
+    otel_path = tdir / "copilot-otel.jsonl"
+    return (
+        events_path if events_path.exists() else None,
+        label,
+        otel_path if otel_path.exists() else None,
+    )
 
 
 def _resolve_pier_job(layout: Layout, *, last: bool, run_id: str | None) -> Path | None:
@@ -717,7 +841,7 @@ def _inspect_pier_job(job_dir: Path) -> None:
         success = "-"
         if rewards:
             success = "yes" if any(float(value) > 0 for value in rewards.values()) else "no"
-        source_path, _label, source_kind = resolve_pier_trial_analysis_source(
+        source_path, _label, source_kind, _otel_path = resolve_pier_trial_analysis_source(
             job_dir, trial_dir.name
         )
         table.add_row(

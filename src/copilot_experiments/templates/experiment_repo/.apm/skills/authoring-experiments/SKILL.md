@@ -36,6 +36,12 @@ tasks:
 Use more `agents` rows for model/agent comparisons and more `tasks` rows or `datasets` for
 suites.
 
+For DeepSWE, do not rewrite tasks. Clone `datacurve-ai/deep-swe` and generate a Pier dataset job:
+
+```bash
+copilot-experiments deepswe-import vendor/deep-swe --n-tasks 3 --sample-seed 0
+```
+
 ## Validate
 ```bash
 copilot-experiments run --dry-run   # validates configs, no credits

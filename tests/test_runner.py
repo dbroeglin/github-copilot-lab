@@ -44,8 +44,11 @@ def test_run_experiment_produces_artifacts(repo_root: Path, experiment: Experime
         assert (td / "metrics.json").exists()
         assert (td / "analysis.json").exists()
         assert (td / "events.jsonl").exists()
+        assert (td / "copilot-otel.jsonl").exists()
         assert (td / "stdout.txt").exists()
         assert (td / "prompt.md").exists()
+        analysis = json.loads((td / "analysis.json").read_text(encoding="utf-8"))
+        assert analysis["llm_calls"]
         # Copilot's bulky --log-dir debug log must never be persisted under results/.
         assert not (td / "logs").exists()
 
@@ -157,6 +160,7 @@ def test_dry_run_validates_and_leaves_nothing_behind(repo_root: Path, experiment
     assert {c.name for c in report.checks} >= {
         "workspace provisioned",
         "session log captured",
+        "otel captured",
         "metrics parsed",
         "analysis written",
         "workspace diff captured",

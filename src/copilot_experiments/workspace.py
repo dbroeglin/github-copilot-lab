@@ -51,7 +51,8 @@ def run_shell(command: str, cwd: Path, env: dict[str, str] | None = None) -> tup
     proc = subprocess.run(
         command,
         cwd=str(cwd),
-        shell=True,
+        # Task setup/verify commands are intentionally authored as shell snippets.
+        shell=True,  # nosec B602
         capture_output=True,
         text=True,
         env=env,
