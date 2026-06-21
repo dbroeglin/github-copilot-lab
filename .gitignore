@@ -8,6 +8,9 @@ dist/
 .venv/
 .pytest_cache/
 .ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
 
 # Experiment results (filesystem artifacts + SQLite index are regenerable)
 results/
