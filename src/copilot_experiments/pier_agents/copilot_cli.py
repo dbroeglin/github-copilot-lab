@@ -28,6 +28,8 @@ from pier.models.trial.paths import EnvironmentPaths
 from pier.utils.trajectory_metrics import populate_context_from_final_metrics
 from pier.utils.trajectory_utils import format_trajectory_json
 
+from copilot_experiments.analysis import llm_calls_from_otel
+from copilot_experiments.models import LlmCallSummary
 from copilot_experiments.sessionlog import load_events, parse_metrics
 
 COPILOT_CLI_AGENT_NAME = "copilot-cli"
@@ -289,6 +291,8 @@ class CopilotCli(BaseInstalledAgent):
         """Convert captured Copilot logs to ATIF and Pier context metrics."""
 
         events_path = find_copilot_session_events(self.logs_dir)
+        otel_path = find_copilot_otel_file(self.logs_dir)
+        otel_records = _read_jsonl(otel_path) if otel_path is not None else []
         metrics = None
         if events_path is not None:
             try:
@@ -299,7 +303,7 @@ class CopilotCli(BaseInstalledAgent):
         jsonl_path = self.logs_dir / self._JSONL_FILENAME
         trajectory = None
         try:
-            trajectory = self._convert_to_trajectory(jsonl_path, events_path, metrics)
+            trajectory = self._convert_to_trajectory(jsonl_path, events_path, metrics, otel_records)
         except Exception:
             self.logger.exception("Failed to convert Copilot CLI logs to ATIF")
 
@@ -324,21 +328,30 @@ class CopilotCli(BaseInstalledAgent):
                 "copilot_session_events": str(events_path.relative_to(self.logs_dir)),
                 "copilot_aiu": metrics.aiu,
             }
+        if otel_path is not None:
+            context.metadata = {
+                **(context.metadata or {}),
+                "copilot_otel_file": str(otel_path.relative_to(self.logs_dir)),
+            }
 
     def _convert_to_trajectory(
         self,
         jsonl_path: Path,
         events_path: Path | None,
         parsed_metrics: Any,
+        otel_records: list[dict[str, Any]] | None = None,
     ) -> Trajectory | None:
-        raw_events = _read_jsonl(jsonl_path)
-        if not raw_events and events_path is not None:
-            raw_events = load_events(events_path)
+        raw_events = load_events(events_path) if events_path is not None else []
+        if not raw_events:
+            raw_events = _read_jsonl(jsonl_path)
         if not raw_events:
             return None
 
+        otel_calls = llm_calls_from_otel(otel_records or [])
+        otel_calls_by_turn = _group_llm_calls_by_turn(otel_calls)
         steps: list[Step] = []
         call_owners: dict[str, Step] = {}
+        current_turn_id: str | None = None
 
         def append_step(step: Step) -> None:
             step.step_id = len(steps) + 1
@@ -349,6 +362,15 @@ class CopilotCli(BaseInstalledAgent):
                 continue
             event_type = event.get("type")
             timestamp = event.get("timestamp")
+
+            if event_type == "assistant.turn_start":
+                data = event.get("data") or {}
+                current_turn_id = _string_or_none(_first_value(data, "turnId", "turn_id"))
+                continue
+
+            if event_type == "assistant.turn_end":
+                current_turn_id = None
+                continue
 
             if event_type == "user.message":
                 data = event.get("data") or {}
@@ -361,6 +383,9 @@ class CopilotCli(BaseInstalledAgent):
 
             if event_type == "assistant.message":
                 data = event.get("data") or {}
+                turn_id = (
+                    _string_or_none(_first_value(data, "turnId", "turn_id")) or current_turn_id
+                )
                 tool_calls = [
                     ToolCall(
                         tool_call_id=str(request.get("toolCallId") or ""),
@@ -379,6 +404,8 @@ class CopilotCli(BaseInstalledAgent):
                     tool_calls=tool_calls or None,
                     metrics=Metrics(completion_tokens=output_tokens) if output_tokens else None,
                 )
+                if turn_id is not None:
+                    _apply_otel_metrics(step, otel_calls_by_turn.pop(turn_id, []))
                 append_step(step)
                 for tool_call in tool_calls:
                     if tool_call.tool_call_id:
@@ -446,24 +473,27 @@ class CopilotCli(BaseInstalledAgent):
             return None
 
         final_metrics = None
-        if parsed_metrics is not None:
+        otel_totals = _otel_final_totals(otel_calls)
+        if parsed_metrics is not None or otel_totals:
+            extra = _final_metrics_extra(parsed_metrics, otel_totals)
             final_metrics = FinalMetrics(
-                total_prompt_tokens=parsed_metrics.input_tokens,
-                total_completion_tokens=parsed_metrics.output_tokens,
-                total_cached_tokens=parsed_metrics.cache_read_tokens,
+                total_prompt_tokens=(
+                    parsed_metrics.input_tokens
+                    if parsed_metrics is not None and parsed_metrics.input_tokens is not None
+                    else otel_totals.get("input_tokens")
+                ),
+                total_completion_tokens=(
+                    parsed_metrics.output_tokens
+                    if parsed_metrics is not None and parsed_metrics.output_tokens is not None
+                    else otel_totals.get("output_tokens")
+                ),
+                total_cached_tokens=(
+                    parsed_metrics.cache_read_tokens
+                    if parsed_metrics is not None and parsed_metrics.cache_read_tokens is not None
+                    else None
+                ),
                 total_steps=len(steps),
-                extra={
-                    key: value
-                    for key, value in {
-                        "total_tokens": parsed_metrics.total_tokens,
-                        "aiu": parsed_metrics.aiu,
-                        "reasoning_tokens": parsed_metrics.reasoning_tokens,
-                        "peak_context_tokens": parsed_metrics.peak_context_tokens,
-                        "summarization_count": parsed_metrics.n_compactions,
-                    }.items()
-                    if value is not None
-                }
-                or None,
+                extra=extra or None,
             )
 
         return Trajectory(
@@ -525,6 +555,127 @@ def _append_otel_resource_attributes(
     env["OTEL_RESOURCE_ATTRIBUTES"] = ",".join([part for part in (existing, *additions) if part])
 
 
+def _group_llm_calls_by_turn(
+    calls: list[LlmCallSummary],
+) -> dict[str, list[LlmCallSummary]]:
+    by_turn: dict[str, list[LlmCallSummary]] = {}
+    for call in calls:
+        if call.turn_id is None:
+            continue
+        by_turn.setdefault(call.turn_id, []).append(call)
+    return by_turn
+
+
+def _apply_otel_metrics(step: Step, calls: list[LlmCallSummary]) -> None:
+    if not calls:
+        return
+
+    metrics = step.metrics or Metrics()
+    input_tokens = _sum_optional_int(call.input_tokens for call in calls)
+    output_tokens = _sum_optional_int(call.output_tokens for call in calls)
+    if input_tokens is not None:
+        metrics.prompt_tokens = input_tokens
+    if output_tokens is not None:
+        metrics.completion_tokens = output_tokens
+
+    metrics.extra = {
+        **(metrics.extra or {}),
+        "copilot_otel": _drop_none(
+            {
+                "llm_call_count": len(calls),
+                "input_tokens": input_tokens,
+                "cache_creation_input_tokens": _sum_optional_int(
+                    call.cache_creation_input_tokens for call in calls
+                ),
+                "output_tokens": output_tokens,
+                "total_tokens": _sum_optional_int(call.total_tokens for call in calls),
+                "aiu": _sum_optional_float(call.aiu for call in calls),
+                "server_duration_ms": _sum_optional_int(call.server_duration_ms for call in calls),
+                "current_tokens": _last_not_none(call.current_tokens for call in calls),
+                "token_limit": _last_not_none(call.token_limit for call in calls),
+                "llm_calls": [_llm_call_dict(call) for call in calls],
+            }
+        ),
+    }
+    step.metrics = metrics
+    step.llm_call_count = len(calls)
+
+
+def _otel_final_totals(calls: list[LlmCallSummary]) -> dict[str, Any]:
+    if not calls:
+        return {}
+    return _drop_none(
+        {
+            "llm_call_count": len(calls),
+            "input_tokens": _sum_optional_int(call.input_tokens for call in calls),
+            "cache_creation_input_tokens": _sum_optional_int(
+                call.cache_creation_input_tokens for call in calls
+            ),
+            "output_tokens": _sum_optional_int(call.output_tokens for call in calls),
+            "total_tokens": _sum_optional_int(call.total_tokens for call in calls),
+            "aiu": _sum_optional_float(call.aiu for call in calls),
+            "server_duration_ms": _sum_optional_int(call.server_duration_ms for call in calls),
+        }
+    )
+
+
+def _final_metrics_extra(parsed_metrics: Any, otel_totals: dict[str, Any]) -> dict[str, Any]:
+    extra: dict[str, Any] = {}
+    if parsed_metrics is not None:
+        extra.update(
+            _drop_none(
+                {
+                    "total_tokens": parsed_metrics.total_tokens,
+                    "aiu": parsed_metrics.aiu,
+                    "reasoning_tokens": parsed_metrics.reasoning_tokens,
+                    "peak_context_tokens": parsed_metrics.peak_context_tokens,
+                    "summarization_count": parsed_metrics.n_compactions,
+                }
+            )
+        )
+    if otel_totals:
+        extra["copilot_otel"] = otel_totals
+    return extra
+
+
+def _llm_call_dict(call: LlmCallSummary) -> dict[str, Any]:
+    return call.model_dump(exclude_none=True)
+
+
+def _sum_optional_int(values: Any) -> int | None:
+    total = 0
+    found = False
+    for value in values:
+        if value is None:
+            continue
+        total += int(value)
+        found = True
+    return total if found else None
+
+
+def _sum_optional_float(values: Any) -> float | None:
+    total = 0.0
+    found = False
+    for value in values:
+        if value is None:
+            continue
+        total += float(value)
+        found = True
+    return round(total, 6) if found else None
+
+
+def _last_not_none(values: Any) -> Any:
+    result = None
+    for value in values:
+        if value is not None:
+            result = value
+    return result
+
+
+def _drop_none(values: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in values.items() if value is not None}
+
+
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
@@ -563,6 +714,19 @@ def _normalize_arguments(arguments: Any) -> dict[str, Any]:
     if arguments is None:
         return {}
     return {"value": arguments}
+
+
+def _string_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
+def _first_value(data: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in data:
+            return data[key]
+    return None
 
 
 def _stringify_tool_result(result: Any) -> str:

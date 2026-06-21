@@ -81,3 +81,11 @@ configured, and `SessionAnalysis` ingests that file when present to populate a p
 and annotate turns with OTel input/cache-write/output/AIU/API-duration fields. Native
 `events.jsonl` remains the authoritative source for session-level totals and richer forensic
 details; OTel still does not split each call's input into non-cached input versus cache-read tokens.
+
+The Pier ATIF trajectory also carries this complement now. Assistant steps matched by
+`github.copilot.turn_id` get ATIF prompt/completion token metrics plus
+`metrics.extra.copilot_otel` for the OTel-only fields (`cache_creation_input_tokens`, AIU, server
+duration, context size, token limit, and normalized per-call records). `final_metrics.extra` stores
+the aggregate OTel totals. We deliberately do not map OTel cache creation into ATIF
+`cached_tokens`/`total_cached_tokens`, because those fields represent cache reads in our native
+Copilot economics.

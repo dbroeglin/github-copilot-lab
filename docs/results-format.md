@@ -41,7 +41,7 @@ download. `copilot-experiments` derives summaries and indexes from that tree.
 | --- | --- |
 | `jobs/<job>/result.json` | Pier job-level status and stats. |
 | `jobs/<job>/<trial>/result.json` | Pier trial status, agent info, verifier result, exceptions, timings. |
-| `agent/trajectory.json` | ATIF trajectory emitted by the installed agent. Used as a fallback for non-Copilot agents. |
+| `agent/trajectory.json` | ATIF trajectory emitted by the installed agent. Copilot agent steps include OTel per-LLM-call metrics when `copilot-otel.jsonl` is available; the file is also used as a fallback for non-Copilot agents. |
 | `agent/copilot-cli.jsonl` / `.txt` | Raw Copilot CLI output streams. Useful for auth or CLI failures. |
 | `agent/copilot-session/**/events.jsonl` | Native Copilot session log. Primary source for Copilot turns, tool calls, tokens, AIU, and analysis. |
 | `agent/copilot-otel.jsonl` | Copilot OTel file-exporter output, captured by default for Copilot agent runs unless custom OTel destination settings override it. Useful for per-LLM-call spans with input/output/cache-write/nano-AIU details. |

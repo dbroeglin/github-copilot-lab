@@ -258,7 +258,7 @@ def analyze_events(
 
 
 def _apply_otel_records(analysis: SessionAnalysis, records: list[dict[str, Any]]) -> None:
-    calls = _llm_calls_from_otel(records)
+    calls = llm_calls_from_otel(records)
     if not calls:
         return
 
@@ -307,7 +307,9 @@ def _apply_otel_records(analysis: SessionAnalysis, records: list[dict[str, Any]]
     analysis.economics.n_requests = len(calls)
 
 
-def _llm_calls_from_otel(records: list[dict[str, Any]]) -> list[LlmCallSummary]:
+def llm_calls_from_otel(records: list[dict[str, Any]]) -> list[LlmCallSummary]:
+    """Extract Copilot LLM-call summaries from OTel file-exporter records."""
+
     calls: list[LlmCallSummary] = []
     for record in records:
         if record.get("type") != "span":
@@ -355,6 +357,9 @@ def _llm_calls_from_otel(records: list[dict[str, Any]]) -> list[LlmCallSummary]:
             )
         )
     return calls
+
+
+_llm_calls_from_otel = llm_calls_from_otel
 
 
 def _chat_usage_event(events: Any) -> dict[str, Any]:

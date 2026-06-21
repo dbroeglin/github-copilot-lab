@@ -142,6 +142,12 @@ per-token-type rates from `session.compaction_complete` (`costPerBatch`) when av
 to documented defaults otherwise, and normalises the split so it always sums to the authoritative
 `totalNanoAiu`. See [ADR-0011](adr/0011-token-economics-from-session-shutdown.md).
 
+Pier `agent/trajectory.json` carries the same OTel facts when the local file export is present.
+Assistant steps matched by `turnId` get ATIF `metrics.prompt_tokens`, `metrics.completion_tokens`,
+`llm_call_count`, and `metrics.extra.copilot_otel`; `final_metrics.extra.copilot_otel` stores the
+aggregate per-call totals. The native `events.jsonl` path remains authoritative for session-level
+totals when a `session.shutdown` exists.
+
 ## How the session log is read
 
 The Copilot CLI writes a per-session append-only stream of typed events. The fields the
