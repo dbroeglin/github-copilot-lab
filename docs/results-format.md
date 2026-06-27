@@ -89,4 +89,5 @@ uv run copilot-experiments analyze --file jobs/<job>/<trial>/agent/copilot-sessi
 
 If the selected Pier trial has no native Copilot `events.jsonl`, `analyze` falls back to
 `agent/trajectory.json` when present; otherwise it reports that no Copilot session log or
-trajectory is available.
+trajectory is available. When Pier recorded a trial exception before the agent ran, `analyze`
+includes that harness error and points at the trial `result.json`.

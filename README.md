@@ -70,7 +70,9 @@ current local checkout into uv's cache. If you are iterating on the tool and nee
 rebuild from the working tree, add `--no-cache` before `--from`.
 
 Real runs require Copilot auth (`COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, or `gh auth
-login`) and a Pier-supported execution backend such as Docker.
+login`) and a Pier-supported execution backend such as Docker. `run` preflights the selected
+backend before creating a job; for Docker this checks the CLI, Compose plugin, and daemon
+connection so missing WSL integration fails before an empty Pier job is recorded.
 
 Each `run` is a new measurement. If the configured Pier `job_name` already exists under `jobs/`,
 `copilot-experiments` writes the rerun to a timestamped job name instead of silently reusing the
