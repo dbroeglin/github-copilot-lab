@@ -345,6 +345,7 @@ def llm_calls_from_otel(records: list[dict[str, Any]]) -> list[LlmCallSummary]:
                 input_tokens=input_tokens,
                 cache_read_input_tokens=_first_otel_int(
                     attrs,
+                    "gen_ai.usage.cache_read.input_tokens",
                     "gen_ai.usage.cache_read_input_tokens",
                     "gen_ai.usage.cache_read_tokens",
                     "gen_ai.usage.cached_input_tokens",
@@ -354,8 +355,10 @@ def llm_calls_from_otel(records: list[dict[str, Any]]) -> list[LlmCallSummary]:
                     "gen_ai.usage.input_token_details.cache_read_tokens",
                     "gen_ai.usage.input_tokens_details.cached_tokens",
                 ),
-                cache_creation_input_tokens=_otel_int(
-                    attrs.get("gen_ai.usage.cache_creation_input_tokens")
+                cache_creation_input_tokens=_first_otel_int(
+                    attrs,
+                    "gen_ai.usage.cache_creation.input_tokens",
+                    "gen_ai.usage.cache_creation_input_tokens",
                 ),
                 output_tokens=output_tokens,
                 total_tokens=(
