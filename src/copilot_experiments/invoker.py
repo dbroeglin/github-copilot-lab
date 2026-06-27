@@ -363,6 +363,7 @@ class MockInvoker:
                 data = ev.get("data") or {}
                 output_tokens = int(data.get("outputTokens") or 0)
                 input_tokens = 1000 + i * 100
+                cache_read_tokens = 900 + i * 90
                 cache_creation_tokens = 100 + i * 10
                 nano_aiu = 100_000_000 + i * 10_000_000
                 record = {
@@ -373,6 +374,7 @@ class MockInvoker:
                         "gen_ai.request.model": model,
                         "gen_ai.response.model": model,
                         "gen_ai.usage.input_tokens": input_tokens,
+                        "gen_ai.usage.cache_read_input_tokens": cache_read_tokens,
                         "gen_ai.usage.cache_creation_input_tokens": cache_creation_tokens,
                         "gen_ai.usage.output_tokens": output_tokens,
                         "github.copilot.nano_aiu": nano_aiu,

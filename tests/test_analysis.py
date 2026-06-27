@@ -125,6 +125,7 @@ def _otel_records() -> list[dict]:
                 "gen_ai.request.model": "claude-opus-4.8",
                 "gen_ai.response.model": "claude-opus-4.8",
                 "gen_ai.usage.input_tokens": 1000,
+                "gen_ai.usage.cache_read_input_tokens": 700,
                 "gen_ai.usage.cache_creation_input_tokens": 200,
                 "gen_ai.usage.output_tokens": 100,
                 "github.copilot.nano_aiu": 500_000_000,
@@ -151,6 +152,7 @@ def _otel_records() -> list[dict]:
                 "gen_ai.request.model": "claude-opus-4.8",
                 "gen_ai.response.model": "claude-opus-4.8",
                 "gen_ai.usage.input_tokens": 1200,
+                "gen_ai.usage.cache_read_input_tokens": 900,
                 "gen_ai.usage.cache_creation_input_tokens": 50,
                 "gen_ai.usage.output_tokens": 50,
                 "github.copilot.nano_aiu": 250_000_000,
@@ -213,18 +215,21 @@ def test_analyze_enriches_llm_calls_from_otel():
     a = analyze_events(_events(), _otel_records())
     assert len(a.llm_calls) == 2
     assert a.llm_calls[0].input_tokens == 1000
+    assert a.llm_calls[0].cache_read_input_tokens == 700
     assert a.llm_calls[0].cache_creation_input_tokens == 200
     assert a.llm_calls[0].aiu == 0.5
     assert a.llm_calls[0].server_duration_ms == 750
     assert a.llm_calls[0].current_tokens == 900
     assert a.llm_calls[1].turn_id == "1"
     assert a.turns[0].input_tokens == 1000
+    assert a.turns[0].cache_read_input_tokens == 700
     assert a.turns[0].cache_creation_input_tokens == 200
     assert a.turns[0].aiu == 0.5
     assert a.turns[1].input_tokens == 1200
     assert a.input_tokens == 2200
     assert a.output_tokens == 150
     assert a.total_tokens == 2350
+    assert a.economics.cache_read_tokens == 1600
     assert a.economics.cache_write_tokens == 250
     assert a.economics.aiu == 0.75
     assert a.economics.api_duration_ms == 1200
@@ -256,5 +261,6 @@ def test_render_includes_otel_llm_calls():
     render_session_analysis(a, console, title="with-otel", max_turns=10)
     out = buf.getvalue()
     assert "LLM calls (OTel)" in out
+    assert "cache read" in out
     assert "cache write" in out
     assert "0.500" in out

@@ -319,9 +319,10 @@ When `agent/copilot-otel.jsonl` is present, each assistant step that can be matc
 `metrics.extra.copilot_otel`. That extra payload preserves the per-call OTel facts the standard
 ATIF token fields cannot represent directly: `cache_creation_input_tokens`, `aiu`,
 `server_duration_ms`, current context size, token limit, and the raw normalized `llm_calls` list.
-`final_metrics.extra.copilot_otel` stores the run-level OTel aggregate. ATIF
-`total_cached_tokens` remains the native cache-read total; OTel cache creation is not written there
-because Copilot OTel does not expose a per-call cache-read split.
+When the exporter includes per-call cache reads, the payload also includes
+`cache_read_input_tokens`. `final_metrics.extra.copilot_otel` stores the run-level OTel aggregate.
+ATIF `total_cached_tokens` uses the native cache-read total when available and falls back to OTel
+cache reads when OTel exposes them.
 
 Use ATIF for cross-agent comparisons and fallback analysis. Use native `events.jsonl` for
 Copilot-specific economics, compaction/truncation detail, and the most faithful timeline.
@@ -491,7 +492,7 @@ Observed span records from local file-exporter probes:
 | Span | Useful fields | What it adds beyond `events.jsonl` |
 | --- | --- | --- |
 | `invoke_agent` | `gen_ai.conversation.id`, `gen_ai.agent.id`, `gen_ai.agent.version`, `gen_ai.request.model`, `github.copilot.agent.type`, `github.copilot.turn_count`, aggregate `gen_ai.usage.*`, aggregate `github.copilot.nano_aiu`, `github.copilot.context.skills`, `github.copilot.context.mcp_server_names`, `github.copilot.context.custom_agent_names` | Agent-level trace root and aggregate usage/cost for the invocation. MCP server names are hashed. |
-| `chat <model>` | `gen_ai.conversation.id`, `github.copilot.turn_id`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.response.id`, `gen_ai.response.finish_reasons`, `gen_ai.usage.input_tokens`, `gen_ai.usage.cache_creation_input_tokens`, `gen_ai.usage.output_tokens`, `github.copilot.nano_aiu`, `github.copilot.server_duration`, `github.copilot.interaction_id`, `github.copilot.service_request_id` | Per-LLM-call input/output/cache-write tokens, nano-AIU, and server duration. This is the main data source for turn-level economics. |
+| `chat <model>` | `gen_ai.conversation.id`, `github.copilot.turn_id`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.response.id`, `gen_ai.response.finish_reasons`, `gen_ai.usage.input_tokens`, optional cache-read usage fields, `gen_ai.usage.cache_creation_input_tokens`, `gen_ai.usage.output_tokens`, `github.copilot.nano_aiu`, `github.copilot.server_duration`, `github.copilot.interaction_id`, `github.copilot.service_request_id` | Per-LLM-call input/output/cache-read/cache-write tokens when exported, nano-AIU, and server duration. This is the main data source for turn-level economics. |
 | `execute_tool <tool>` | `gen_ai.operation.name`, `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.tool.type`, `gen_ai.provider.name`, span status | Standard tool spans that can be joined to chat spans by trace and to native events by tool-call id. Native `tool.execution_complete.toolTelemetry` remains richer for result sizes and file/code metadata. |
 
 `chat <model>` spans also emitted a `github.copilot.session.usage_info` event with
@@ -505,15 +506,16 @@ Per-call token/cost interpretation:
 | Field | Interpretation |
 | --- | --- |
 | `gen_ai.usage.input_tokens` | Total prompt/input tokens for that LLM request. In observed runs, summing chat spans matched `session.shutdown.modelMetrics.<model>.usage.inputTokens`. |
+| `gen_ai.usage.cache_read_input_tokens` | Cache-read tokens for that request when exported. The parser also accepts common aliases such as `gen_ai.usage.cached_tokens`. |
 | `gen_ai.usage.cache_creation_input_tokens` | Cache-write tokens for that request. In observed runs, summing chat spans matched `session.shutdown.tokenDetails.cache_write.tokenCount`. |
 | `gen_ai.usage.output_tokens` | Output tokens for that request. |
 | `github.copilot.nano_aiu` | Per-request cost in nano-AIU. Prefer this over `github.copilot.cost` for economics; summing observed chat spans matched `session.shutdown.totalNanoAiu`. |
 | `github.copilot.server_duration` | Per-request server/API duration in milliseconds; summing observed chat spans matched `session.shutdown.totalApiDurationMs`. |
 | `github.copilot.turn_id` | Join key to native `assistant.turn_*` / `assistant.message` events. |
 
-The observed OTel spans did **not** split per-call `input_tokens` into non-cached input versus
-cache-read tokens. That split remains session-level in `session.shutdown.tokenDetails`; per call, we
-can capture total input, cache creation, output, server duration, and AIU.
+Some observed OTel spans did **not** split per-call `input_tokens` into non-cached input versus
+cache-read tokens. When the exporter provides cache-read fields, the parser captures them; otherwise
+that split remains session-level in `session.shutdown.tokenDetails`.
 
 Metrics currently documented by the CLI help:
 

@@ -72,20 +72,21 @@ On 2026-06-21, `copilot help monitoring` and local file-exporter probes with Cop
 `1.0.64-0` showed an additional optional source: OpenTelemetry `chat <model>` spans carry
 per-LLM-call `gen_ai.usage.input_tokens`, `gen_ai.usage.cache_creation_input_tokens`,
 `gen_ai.usage.output_tokens`, `github.copilot.nano_aiu`, `github.copilot.server_duration`, and
-`github.copilot.turn_id`. In the probes, summing chat spans matched the native
+`github.copilot.turn_id`. Newer/local exporter variants may also include per-call cache-read fields
+such as `gen_ai.usage.cache_read_input_tokens`. In the probes, summing chat spans matched the native
 `session.shutdown` totals for input, cache-write, output, nano-AIU, and API duration.
 
 We integrated this as a complement, not a replacement. The harness now enables local OTel file
 export to `copilot-otel.jsonl` for Copilot agent runs when no explicit OTLP destination is
 configured, and `SessionAnalysis` ingests that file when present to populate a per-call LLM table
-and annotate turns with OTel input/cache-write/output/AIU/API-duration fields. Native
+and annotate turns with OTel input/cache-read/cache-write/output/AIU/API-duration fields. Native
 `events.jsonl` remains the authoritative source for session-level totals and richer forensic
-details; OTel still does not split each call's input into non-cached input versus cache-read tokens.
+details; OTel cache-read fields are captured when present, otherwise that split remains session-level.
 
 The Pier ATIF trajectory also carries this complement now. Assistant steps matched by
 `github.copilot.turn_id` get ATIF prompt/completion token metrics plus
 `metrics.extra.copilot_otel` for the OTel-only fields (`cache_creation_input_tokens`, AIU, server
-duration, context size, token limit, and normalized per-call records). `final_metrics.extra` stores
-the aggregate OTel totals. We deliberately do not map OTel cache creation into ATIF
-`cached_tokens`/`total_cached_tokens`, because those fields represent cache reads in our native
-Copilot economics.
+duration, context size, token limit, optional cache-read tokens, and normalized per-call records).
+`final_metrics.extra` stores the aggregate OTel totals. We deliberately do not map OTel cache
+creation into ATIF `cached_tokens`/`total_cached_tokens`, because those fields represent cache reads
+in our native Copilot economics.
