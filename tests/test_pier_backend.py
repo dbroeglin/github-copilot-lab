@@ -4,14 +4,19 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from subprocess import CompletedProcess
 
 import pytest
+from typer.testing import CliRunner
 
+from copilot_experiments.cli import app
 from copilot_experiments.pier_backend import (
     COPILOT_CLI_AGENT_IMPORT_PATH,
+    PierBackendPreflightError,
     discover_pier_job_configs,
     inject_copilot_token,
     load_pier_job_config,
+    preflight_pier_backend,
     prepare_pier_job_for_run,
 )
 
@@ -117,6 +122,84 @@ def test_prepare_pier_job_for_run_resume_keeps_existing_name(tmp_path: Path):
 
     assert prepared.run_name == "smoke"
     assert not prepared.renamed
+
+
+def test_preflight_pier_backend_reports_missing_docker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    config_path = tmp_path / "job.yaml"
+    config_path.write_text("job_name: smoke\n", encoding="utf-8")
+    config = load_pier_job_config(config_path, root=tmp_path)
+    monkeypatch.setattr("copilot_experiments.pier_backend.shutil.which", lambda _name: None)
+
+    with pytest.raises(PierBackendPreflightError, match="docker.*not found"):
+        preflight_pier_backend(config)
+
+
+def test_preflight_pier_backend_checks_docker_compose_and_daemon(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    config_path = tmp_path / "job.yaml"
+    config_path.write_text("job_name: smoke\n", encoding="utf-8")
+    config = load_pier_job_config(config_path, root=tmp_path)
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], **_kwargs):
+        calls.append(command)
+        return CompletedProcess(command, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr("copilot_experiments.pier_backend.shutil.which", lambda _name: "docker")
+    monkeypatch.setattr("copilot_experiments.pier_backend.subprocess.run", fake_run)
+
+    preflight_pier_backend(config)
+
+    assert calls == [["docker", "compose", "version"], ["docker", "info"]]
+
+
+def test_preflight_pier_backend_reports_unreachable_docker_daemon(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    config_path = tmp_path / "job.yaml"
+    config_path.write_text("job_name: smoke\n", encoding="utf-8")
+    config = load_pier_job_config(config_path, root=tmp_path)
+
+    def fake_run(command: list[str], **_kwargs):
+        if command == ["docker", "info"]:
+            return CompletedProcess(command, 1, stdout="", stderr="Cannot connect to Docker daemon")
+        return CompletedProcess(command, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr("copilot_experiments.pier_backend.shutil.which", lambda _name: "docker")
+    monkeypatch.setattr("copilot_experiments.pier_backend.subprocess.run", fake_run)
+
+    with pytest.raises(PierBackendPreflightError, match="Cannot connect to Docker daemon"):
+        preflight_pier_backend(config)
+
+
+def test_cli_run_fails_before_auth_when_pier_backend_preflight_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    experiments = tmp_path / "experiments"
+    experiments.mkdir()
+    (experiments / "job.yaml").write_text("job_name: smoke\n", encoding="utf-8")
+
+    def fail_preflight(_config):
+        raise PierBackendPreflightError("Docker is unavailable")
+
+    def fail_if_called():
+        pytest.fail("auth should not run after backend preflight failure")
+
+    monkeypatch.setattr("copilot_experiments.cli.preflight_pier_backend", fail_preflight)
+    monkeypatch.setattr("copilot_experiments.cli.preflight_github_token", fail_if_called)
+    monkeypatch.setattr(
+        "copilot_experiments.cli.run_pier_job",
+        lambda _config: pytest.fail("Pier job should not start after backend preflight failure"),
+    )
+
+    result = CliRunner().invoke(app, ["run", "--root", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "Pier backend preflight failed" in result.output
+    assert "Docker is unavailable" in result.output
 
 
 @pytest.mark.parametrize(

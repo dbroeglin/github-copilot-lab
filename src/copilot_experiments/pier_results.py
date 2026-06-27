@@ -139,6 +139,39 @@ def resolve_pier_trial_analysis_source(
     return None, label, None, None
 
 
+def describe_missing_pier_analysis_source(
+    job_dir: Path, trial: int | str | None = None
+) -> str | None:
+    """Explain why a Pier trial has no Copilot-native analysis source."""
+
+    trial_dir = _resolve_trial_dir(job_dir, trial)
+    if trial_dir is None:
+        return "No Pier trial directories with result.json were found."
+
+    result_path = trial_dir / "result.json"
+    if not result_path.exists():
+        return f"Selected Pier trial has no result.json: {result_path}"
+
+    trial_result = read_json(result_path)
+    exception = trial_result.get("exception_info") or {}
+    if exception:
+        message = (
+            exception.get("exception_message")
+            or exception.get("message")
+            or exception.get("exception_type")
+            or str(exception)
+        )
+        return (
+            "Selected Pier trial failed before a Copilot session was captured: "
+            f"{message}\nInspect: {result_path}"
+        )
+
+    return (
+        "Selected Pier trial completed without a native Copilot session log or ATIF trajectory.\n"
+        f"Inspect: {trial_dir / 'agent'}"
+    )
+
+
 def _resolve_trial_dir(job_dir: Path, trial: int | str | None = None) -> Path | None:
     trial_dirs = iter_trial_dirs(job_dir)
     if not trial_dirs:

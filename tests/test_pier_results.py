@@ -11,6 +11,7 @@ from copilot_experiments.cli import app
 from copilot_experiments.index import connect, index_pier_job_dir
 from copilot_experiments.pier_results import (
     build_pier_summary,
+    describe_missing_pier_analysis_source,
     resolve_pier_trial_events,
     write_pier_summary,
 )
@@ -165,6 +166,40 @@ def _make_pier_job_with_trajectory(job_dir: Path) -> Path:
     return job_dir
 
 
+def _make_pier_job_with_harness_error(job_dir: Path) -> Path:
+    _write_json(
+        job_dir / "config.json",
+        {"job_name": "demo-job"},
+    )
+    _write_json(
+        job_dir / "result.json",
+        {
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": "2026-01-01T00:00:05Z",
+            "stats": {"n_errored_trials": 1},
+        },
+    )
+    trial = job_dir / "copilot-cli__textstats__1"
+    _write_json(
+        trial / "result.json",
+        {
+            "trial_name": "copilot-cli__textstats__1",
+            "task_name": "textstats",
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": "2026-01-01T00:00:05Z",
+            "agent_info": {
+                "name": "copilot-cli",
+                "model_info": {"name": "gpt-5-mini"},
+            },
+            "exception_info": {
+                "exception_type": "RuntimeError",
+                "exception_message": "Docker daemon unavailable",
+            },
+        },
+    )
+    return job_dir
+
+
 def test_build_pier_summary_reads_native_copilot_events(tmp_path: Path):
     job_dir = _make_pier_job(tmp_path / "jobs" / "demo-job")
 
@@ -202,6 +237,17 @@ def test_build_pier_summary_reads_trajectory_when_native_events_are_absent(tmp_p
     assert variant["avg_output_tokens"] == 7.0
 
 
+def test_describe_missing_pier_analysis_source_explains_harness_error(tmp_path: Path):
+    job_dir = _make_pier_job_with_harness_error(tmp_path / "jobs" / "demo-job")
+
+    diagnostic = describe_missing_pier_analysis_source(job_dir)
+
+    assert diagnostic is not None
+    assert "failed before a Copilot session was captured" in diagnostic
+    assert "Docker daemon unavailable" in diagnostic
+    assert "result.json" in diagnostic
+
+
 def test_cli_analyze_reads_pier_job_events(tmp_path: Path):
     _make_pier_job(tmp_path / "jobs" / "demo-job")
     runner = CliRunner()
@@ -230,6 +276,22 @@ def test_cli_analyze_reads_pier_job_trajectory_when_events_are_absent(tmp_path: 
     assert "demo-job" in result.output
     assert "gpt-5-mini" in result.output
     assert "view" in result.output
+
+
+def test_cli_analyze_reports_pier_harness_error_when_logs_are_absent(tmp_path: Path):
+    _make_pier_job_with_harness_error(tmp_path / "jobs" / "demo-job")
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        ["analyze", "demo-job", "--root", str(tmp_path), "--trial", "1"],
+    )
+
+    assert result.exit_code == 1
+    assert "No Copilot session log or trajectory found" in result.output
+    assert "failed before a Copilot session was captured" in result.output
+    assert "Docker daemon" in result.output
+    assert "unavailable" in result.output
 
 
 def test_write_pier_summary_and_index(tmp_path: Path):

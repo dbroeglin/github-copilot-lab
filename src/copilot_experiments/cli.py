@@ -19,12 +19,16 @@ from .index import list_runs as index_list_runs
 from .index import reindex as index_reindex
 from .models import DryRunReport, Experiment, ExperimentRun
 from .pier_backend import (
+    PierBackendPreflightError,
     discover_pier_job_configs,
     inject_copilot_token,
+    preflight_pier_backend,
     prepare_pier_job_for_run,
     run_pier_job,
 )
 from .pier_results import (
+    describe_missing_pier_analysis_source,
+    iter_pier_trial_summaries,
     resolve_pier_trial_analysis_source,
     write_pier_summary,
 )
@@ -295,6 +299,13 @@ def run(
             raise typer.Exit(0)
 
         try:
+            for spec in pier_specs:
+                preflight_pier_backend(spec.config)
+        except PierBackendPreflightError as exc:
+            err.print(f"[red]Pier backend preflight failed:[/red] {exc}")
+            raise typer.Exit(1) from exc
+
+        try:
             auth = preflight_github_token()
         except AuthError as exc:
             err.print(f"[red]Authentication error:[/red] {exc}")
@@ -322,6 +333,7 @@ def run(
                 continue
             summary = write_pier_summary(run_result.job_dir)
             _print_run_summary(summary)
+            _warn_failed_pier_trials(run_result.job_dir)
             if summary.get("status") != "completed":
                 any_failures = True
             console.print(f"[dim]results:[/dim] {run_result.job_dir}\n")
@@ -633,6 +645,9 @@ def analyze(
             )
             if source_path is None:
                 err.print(f"[red]No Copilot session log or trajectory found in[/red] {pier_job}")
+                diagnostic = describe_missing_pier_analysis_source(pier_job, trial)
+                if diagnostic:
+                    err.print(f"[yellow]{diagnostic}[/yellow]")
                 raise typer.Exit(1)
             selected_otel = otel_file or discovered_otel
             analysis = (
@@ -816,6 +831,28 @@ def _warn_failed_trials(layout: Layout, experiment: Experiment, run: ExperimentR
         f"[yellow]Warning:[/yellow] run status [bold]{run.status}[/bold] — "
         f"{len(problems)} trial(s) failed in the harness (not the experiment). "
         "Inspect the captured output:"
+    )
+    for line in problems:
+        err.print(f"[yellow]{line}[/yellow]")
+
+
+def _warn_failed_pier_trials(job_dir: Path) -> None:
+    """Point Pier harness failures at the trial result artifact."""
+
+    problems: list[str] = []
+    for trial in iter_pier_trial_summaries(job_dir):
+        if trial.get("status") == "ok":
+            continue
+        trial_name = str(trial.get("trial_name") or trial.get("trial_no") or "-")
+        problems.append(
+            f"  {trial_name}: harness failure — {trial.get('error') or trial.get('status')}\n"
+            f"      -> {job_dir / trial_name / 'result.json'}"
+        )
+    if not problems:
+        return
+    err.print(
+        f"[yellow]Warning:[/yellow] Pier job [bold]{job_dir.name}[/bold] had "
+        f"{len(problems)} harness failure(s). Inspect the captured trial result:"
     )
     for line in problems:
         err.print(f"[yellow]{line}[/yellow]")

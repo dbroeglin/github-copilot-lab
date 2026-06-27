@@ -165,6 +165,10 @@ rebuild from the working tree, add `--no-cache` before `--from`.
 Python experiment path still has an ephemeral mock dry-run, but Pier is the primary authoring
 model.
 
+`run` performs a lightweight backend preflight before Pier creates a job. For the default Docker
+backend it verifies that `docker`, `docker compose`, and the Docker daemon are reachable; this catches
+common WSL/Docker Desktop integration issues before a trial can fail without Copilot logs.
+
 Pier itself resumes existing matching job directories and skips trials that already have
 `result.json`. `copilot-experiments run` treats a plain rerun as a fresh measurement instead: when
 `jobs/<job_name>/` already exists, it appends a timestamp to the Pier job name for the new run. Pass

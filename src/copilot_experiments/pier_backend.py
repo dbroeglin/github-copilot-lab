@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -47,6 +49,10 @@ class PreparedPierJob:
     @property
     def renamed(self) -> bool:
         return self.requested_name != self.run_name
+
+
+class PierBackendPreflightError(RuntimeError):
+    """A Pier execution backend is not available before a job starts."""
 
 
 def discover_pier_job_configs(root: Path, name: str | None = None) -> list[PierJobSpec]:
@@ -120,6 +126,14 @@ def normalize_pier_job_config(config: Any, *, root: Path, base_dir: Path) -> Any
     return config
 
 
+def preflight_pier_backend(config: Any) -> None:
+    """Fail fast when the configured Pier backend is not usable locally."""
+
+    backend = _environment_type(config)
+    if backend == "docker":
+        _preflight_docker_backend()
+
+
 def inject_copilot_token(config: Any, token: str) -> None:
     """Inject a GitHub token into local Copilot agents without persisting it to config."""
 
@@ -189,3 +203,51 @@ def _resolve_path(path: Path, base: Path) -> Path:
 
 def _job_dir(config: Any) -> Path:
     return Path(config.jobs_dir) / str(config.job_name)
+
+
+def _environment_type(config: Any) -> str:
+    environment = getattr(config, "environment", None)
+    value = getattr(environment, "type", None)
+    return str(getattr(value, "value", value) or "").lower()
+
+
+def _preflight_docker_backend() -> None:
+    if shutil.which("docker") is None:
+        raise PierBackendPreflightError(
+            "Pier is configured to use the Docker backend, but the 'docker' CLI was not found. "
+            "Install Docker or enable Docker Desktop WSL integration, then retry."
+        )
+
+    _run_backend_probe(
+        ["docker", "compose", "version"],
+        "Docker Compose is required by Pier's Docker backend but is not available.",
+    )
+    _run_backend_probe(
+        ["docker", "info"],
+        "Docker is installed, but the daemon is not reachable.",
+    )
+
+
+def _run_backend_probe(command: list[str], failure_message: str) -> None:
+    try:
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    except OSError as exc:
+        raise PierBackendPreflightError(f"{failure_message} ({exc})") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise PierBackendPreflightError(
+            f"{failure_message} Probe timed out after {exc.timeout} seconds: {' '.join(command)}"
+        ) from exc
+
+    if proc.returncode == 0:
+        return
+
+    detail = "\n".join(part for part in (proc.stderr.strip(), proc.stdout.strip()) if part)
+    suffix = f"\n{detail}" if detail else ""
+    raise PierBackendPreflightError(
+        f"{failure_message} Command failed: {' '.join(command)}{suffix}"
+    )
