@@ -344,6 +344,7 @@ class LlmCallSummary(BaseModel):
     response_id: str | None = None
     finish_reasons: list[str] = Field(default_factory=list)
     input_tokens: int | None = None
+    cache_read_input_tokens: int | None = None
     cache_creation_input_tokens: int | None = None
     output_tokens: int | None = None
     total_tokens: int | None = None
@@ -368,6 +369,7 @@ class TurnSummary(BaseModel):
     tools: list[str] = Field(default_factory=list)
     output_tokens: int | None = None
     input_tokens: int | None = None
+    cache_read_input_tokens: int | None = None
     cache_creation_input_tokens: int | None = None
     aiu: float | None = None
     api_duration_ms: int | None = None

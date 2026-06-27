@@ -271,6 +271,7 @@ def _apply_otel_records(analysis: SessionAnalysis, records: list[dict[str, Any]]
         if turn is None:
             continue
         _add_turn_int(turn, "input_tokens", call.input_tokens)
+        _add_turn_int(turn, "cache_read_input_tokens", call.cache_read_input_tokens)
         _add_turn_int(turn, "cache_creation_input_tokens", call.cache_creation_input_tokens)
         if turn.output_tokens is None:
             _add_turn_int(turn, "output_tokens", call.output_tokens)
@@ -283,6 +284,7 @@ def _apply_otel_records(analysis: SessionAnalysis, records: list[dict[str, Any]]
         return
 
     input_tokens = _sum_int(call.input_tokens for call in calls)
+    cache_read_tokens = _sum_int(call.cache_read_input_tokens for call in calls)
     cache_creation_tokens = _sum_int(call.cache_creation_input_tokens for call in calls)
     output_tokens = _sum_int(call.output_tokens for call in calls)
     api_duration_ms = _sum_int(call.server_duration_ms for call in calls)
@@ -291,6 +293,8 @@ def _apply_otel_records(analysis: SessionAnalysis, records: list[dict[str, Any]]
     if input_tokens is not None:
         analysis.input_tokens = input_tokens
         analysis.economics.input_tokens_total = input_tokens
+    if cache_read_tokens is not None:
+        analysis.economics.cache_read_tokens = cache_read_tokens
     if cache_creation_tokens is not None:
         analysis.economics.cache_write_tokens = cache_creation_tokens
     if output_tokens is not None:
@@ -339,6 +343,17 @@ def llm_calls_from_otel(records: list[dict[str, Any]]) -> list[LlmCallSummary]:
                 response_id=_otel_string(attrs.get("gen_ai.response.id")),
                 finish_reasons=_strings(attrs.get("gen_ai.response.finish_reasons")),
                 input_tokens=input_tokens,
+                cache_read_input_tokens=_first_otel_int(
+                    attrs,
+                    "gen_ai.usage.cache_read_input_tokens",
+                    "gen_ai.usage.cache_read_tokens",
+                    "gen_ai.usage.cached_input_tokens",
+                    "gen_ai.usage.cached_tokens",
+                    "gen_ai.usage.prompt_tokens_details.cached_tokens",
+                    "gen_ai.usage.input_token_details.cached_tokens",
+                    "gen_ai.usage.input_token_details.cache_read_tokens",
+                    "gen_ai.usage.input_tokens_details.cached_tokens",
+                ),
                 cache_creation_input_tokens=_otel_int(
                     attrs.get("gen_ai.usage.cache_creation_input_tokens")
                 ),
@@ -370,6 +385,32 @@ def _chat_usage_event(events: Any) -> dict[str, Any]:
             continue
         return _otel_attrs(event.get("attributes"))
     return {}
+
+
+def _first_otel_int(attrs: dict[str, Any], *keys: str) -> int | None:
+    for key in keys:
+        value = _otel_attr_value(attrs, key)
+        if value is None:
+            continue
+        parsed = _otel_int(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _otel_attr_value(attrs: dict[str, Any], key: str) -> Any:
+    if key in attrs:
+        return attrs[key]
+    parts = key.split(".")
+    for index in range(len(parts) - 1, 0, -1):
+        prefix = ".".join(parts[:index])
+        value = attrs.get(prefix)
+        if not isinstance(value, dict):
+            continue
+        for part in parts[index:]:
+            value = value.get(part) if isinstance(value, dict) else None
+        return value
+    return None
 
 
 def _otel_attrs(raw: Any) -> dict[str, Any]:

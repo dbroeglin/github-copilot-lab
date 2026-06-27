@@ -119,6 +119,7 @@ def test_copilot_cli_trajectory_includes_otel_llm_metrics(tmp_path: Path):
     assert first_agent_step["metrics"]["extra"]["copilot_otel"] == {
         "llm_call_count": 1,
         "input_tokens": 1000,
+        "cache_read_input_tokens": 700,
         "cache_creation_input_tokens": 200,
         "output_tokens": 100,
         "total_tokens": 1100,
@@ -136,6 +137,7 @@ def test_copilot_cli_trajectory_includes_otel_llm_metrics(tmp_path: Path):
                 "response_model": "claude-opus-4.8",
                 "finish_reasons": [],
                 "input_tokens": 1000,
+                "cache_read_input_tokens": 700,
                 "cache_creation_input_tokens": 200,
                 "output_tokens": 100,
                 "total_tokens": 1100,
@@ -153,6 +155,7 @@ def test_copilot_cli_trajectory_includes_otel_llm_metrics(tmp_path: Path):
     assert final_otel == {
         "llm_call_count": 2,
         "input_tokens": 2200,
+        "cache_read_input_tokens": 1600,
         "cache_creation_input_tokens": 250,
         "output_tokens": 150,
         "total_tokens": 2350,
@@ -180,7 +183,7 @@ def test_copilot_cli_trajectory_uses_otel_totals_without_shutdown_metrics(tmp_pa
     data = trajectory.to_json_dict()
     assert data["final_metrics"]["total_prompt_tokens"] == 2200
     assert data["final_metrics"]["total_completion_tokens"] == 150
-    assert data["final_metrics"].get("total_cached_tokens") is None
+    assert data["final_metrics"]["total_cached_tokens"] == 1600
     assert data["final_metrics"]["extra"]["copilot_otel"]["llm_call_count"] == 2
 
 
@@ -316,6 +319,7 @@ def _otel_records() -> list[dict]:
                 "gen_ai.request.model": "claude-opus-4.8",
                 "gen_ai.response.model": "claude-opus-4.8",
                 "gen_ai.usage.input_tokens": 1000,
+                "gen_ai.usage.cache_read_input_tokens": 700,
                 "gen_ai.usage.cache_creation_input_tokens": 200,
                 "gen_ai.usage.output_tokens": 100,
                 "github.copilot.nano_aiu": 500_000_000,
@@ -342,6 +346,7 @@ def _otel_records() -> list[dict]:
                 "gen_ai.request.model": "claude-opus-4.8",
                 "gen_ai.response.model": "claude-opus-4.8",
                 "gen_ai.usage.input_tokens": 1200,
+                "gen_ai.usage.cache_read_input_tokens": 900,
                 "gen_ai.usage.cache_creation_input_tokens": 50,
                 "gen_ai.usage.output_tokens": 50,
                 "github.copilot.nano_aiu": 250_000_000,

@@ -192,25 +192,36 @@ def _llm_calls_table(a: SessionAnalysis) -> Table | None:
     table.add_column("turn", justify="right")
     table.add_column("model")
     table.add_column("in", justify="right")
+    table.add_column("cache read", justify="right")
     table.add_column("cache write", justify="right")
     table.add_column("out", justify="right")
+    table.add_column("total", justify="right")
     table.add_column("AIU", justify="right")
+    table.add_column("wall", justify="right")
     table.add_column("API", justify="right")
-    table.add_column("ctx", justify="right")
+    table.add_column("ctx/limit", justify="right")
     for call in a.llm_calls:
         model = call.response_model or call.request_model or "-"
         api_duration = (
             _dur(call.server_duration_ms / 1000) if call.server_duration_ms is not None else "-"
         )
+        ctx = (
+            f"{_int(call.current_tokens)}/{_int(call.token_limit)}"
+            if call.token_limit is not None
+            else _int(call.current_tokens)
+        )
         table.add_row(
             call.turn_id or "-",
             model,
             _int(call.input_tokens),
+            _int(call.cache_read_input_tokens),
             _int(call.cache_creation_input_tokens),
             _int(call.output_tokens),
+            _int(call.total_tokens),
             _aiu(call.aiu),
+            _dur(call.duration_s),
             api_duration,
-            _int(call.current_tokens),
+            ctx,
         )
     return table
 

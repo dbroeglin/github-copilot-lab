@@ -490,7 +490,7 @@ class CopilotCli(BaseInstalledAgent):
                 total_cached_tokens=(
                     parsed_metrics.cache_read_tokens
                     if parsed_metrics is not None and parsed_metrics.cache_read_tokens is not None
-                    else None
+                    else otel_totals.get("cache_read_input_tokens")
                 ),
                 total_steps=len(steps),
                 extra=extra or None,
@@ -572,6 +572,7 @@ def _apply_otel_metrics(step: Step, calls: list[LlmCallSummary]) -> None:
 
     metrics = step.metrics or Metrics()
     input_tokens = _sum_optional_int(call.input_tokens for call in calls)
+    cache_read_input_tokens = _sum_optional_int(call.cache_read_input_tokens for call in calls)
     output_tokens = _sum_optional_int(call.output_tokens for call in calls)
     if input_tokens is not None:
         metrics.prompt_tokens = input_tokens
@@ -584,6 +585,7 @@ def _apply_otel_metrics(step: Step, calls: list[LlmCallSummary]) -> None:
             {
                 "llm_call_count": len(calls),
                 "input_tokens": input_tokens,
+                "cache_read_input_tokens": cache_read_input_tokens,
                 "cache_creation_input_tokens": _sum_optional_int(
                     call.cache_creation_input_tokens for call in calls
                 ),
@@ -608,6 +610,9 @@ def _otel_final_totals(calls: list[LlmCallSummary]) -> dict[str, Any]:
         {
             "llm_call_count": len(calls),
             "input_tokens": _sum_optional_int(call.input_tokens for call in calls),
+            "cache_read_input_tokens": _sum_optional_int(
+                call.cache_read_input_tokens for call in calls
+            ),
             "cache_creation_input_tokens": _sum_optional_int(
                 call.cache_creation_input_tokens for call in calls
             ),

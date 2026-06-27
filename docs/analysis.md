@@ -56,8 +56,8 @@ The rendering (built with [Rich](https://rich.readthedocs.io/)) has these parts:
    truncations, files modified, lines ±, AIU per line). Multi-model sessions also get a per-model
    table. See [ADR-0011](adr/0011-token-economics-from-session-shutdown.md).
 5. **LLM calls (OTel)** — *only when `copilot-otel.jsonl` is available.* One row per `chat <model>`
-   span with turn id, model, input tokens, cache-write tokens, output tokens, AIU, API time, and
-   current context size.
+   span with turn id, model, input tokens, cache-read/cache-write tokens when exported, output and
+   total tokens, AIU, wall/API time, and current/limit context size.
 6. **Phases (temporal)** — *only when the session has at least five turns.* The turns are split
    into five contiguous, near-equal groups (`early` → `later`) and each phase shows its turn span,
    tool calls, output tokens, share of total output, and duration. This mirrors the phase-level
@@ -73,8 +73,9 @@ Warnings, if any, are shown in a panel at the bottom.
 > `events.jsonl` logs input, cache, reasoning, and AIU **only as session totals**
 > (`session.shutdown`), never per turn; the per-turn `assistant.message` carries `outputTokens` but
 > not `inputTokens`. Copilot's OTel `chat <model>` spans expose per-LLM-call `input_tokens`,
-> `cache_creation_input_tokens`, `output_tokens`, `nano_aiu`, and server duration when OTel export is
-> enabled; `analyze` auto-loads the harness-captured `copilot-otel.jsonl` when present, or accepts
+> optional cache-read details, `cache_creation_input_tokens`, `output_tokens`, `nano_aiu`, and
+> server duration when OTel export is enabled; `analyze` auto-loads the harness-captured
+> `copilot-otel.jsonl` when present, or accepts
 > `--otel-file` for direct log analysis. The current phase table still distributes only the native
 > per-turn signals — output tokens, tool activity, and duration — and deliberately does **not**
 > fabricate per-phase input or cost. The separate **LLM calls (OTel)** table carries the per-call
@@ -113,7 +114,7 @@ legacy `analysis.json`, and any future consumer.
 | `economics` | `TokenEconomics`: token-type split, AIU cost, context composition, productivity (see below). |
 | `tools` | `ToolStat(name, calls, failures, total_duration_ms, total_result_chars)`, sorted by calls desc. |
 | `llm_calls` | `LlmCallSummary` rows parsed from OTel `chat <model>` spans when `copilot-otel.jsonl` is available. |
-| `turns` | `TurnSummary(turn_no, duration_s, tools, output_tokens, text_preview, …)` plus OTel `input_tokens`, `cache_creation_input_tokens`, `aiu`, and `api_duration_ms` when available. |
+| `turns` | `TurnSummary(turn_no, duration_s, tools, output_tokens, text_preview, …)` plus OTel `input_tokens`, optional `cache_read_input_tokens`, `cache_creation_input_tokens`, `aiu`, and `api_duration_ms` when available. |
 | `phases` | `PhaseStat(name, turn_from, turn_to, n_turns, n_tool_calls, output_tokens, duration_s, output_share)` — five temporal phases (empty for sessions under five turns). |
 | `warnings` | Warning messages. |
 | `event_type_counts` | Histogram of raw event `type`s. |
