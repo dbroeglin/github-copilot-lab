@@ -54,3 +54,70 @@ def test_parse_metrics_empty():
     m = parse_metrics([])
     assert m.n_turns == 0
     assert m.duration_s is None
+
+
+# --------------------------------------------------------------------------- #
+# load_events / copy_events filesystem helpers
+# --------------------------------------------------------------------------- #
+
+
+def test_load_events_skips_blank_and_invalid_lines(tmp_path):
+    from copilot_experiments.sessionlog import load_events
+
+    path = tmp_path / "events.jsonl"
+    path.write_text(
+        '{"type": "session.start"}\n\n   \nnot-json\n{"type": "user.message"}\n',
+        encoding="utf-8",
+    )
+    events = load_events(path)
+    assert [e["type"] for e in events] == ["session.start", "user.message"]
+
+
+def test_load_events_missing_file_returns_empty(tmp_path):
+    from copilot_experiments.sessionlog import load_events
+
+    assert load_events(tmp_path / "nope.jsonl") == []
+
+
+def test_copy_events_roundtrip_with_base(tmp_path):
+    from copilot_experiments.sessionlog import copy_events, events_path
+
+    base = tmp_path / "state"
+    src = events_path("sess-1", base)
+    src.parent.mkdir(parents=True)
+    src.write_text('{"type": "session.start"}\n', encoding="utf-8")
+
+    dest = tmp_path / "out" / "events.jsonl"
+    assert copy_events("sess-1", dest, base) is True
+    assert dest.read_text(encoding="utf-8") == '{"type": "session.start"}\n'
+
+
+def test_copy_events_missing_source_returns_false(tmp_path):
+    from copilot_experiments.sessionlog import copy_events
+
+    dest = tmp_path / "out" / "events.jsonl"
+    assert copy_events("absent", dest, tmp_path / "state") is False
+    assert not dest.exists()
+
+
+# --------------------------------------------------------------------------- #
+# extract_economics: compaction_start peak tracking (no shutdown)
+# --------------------------------------------------------------------------- #
+
+
+def test_compaction_start_tracks_peak_without_shutdown():
+    from copilot_experiments.sessionlog import extract_economics
+
+    events = [
+        {
+            "type": "session.compaction_start",
+            "data": {
+                "systemTokens": 1000,
+                "conversationTokens": 8000,
+                "toolDefinitionsTokens": 500,
+            },
+        },
+    ]
+    econ = extract_economics(events)
+    assert econ.total_tokens is None  # no shutdown -> no authoritative totals
+    assert econ.peak_context_tokens == 9500  # 1000 + 8000 + 500
