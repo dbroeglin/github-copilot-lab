@@ -82,7 +82,7 @@ def init(
     """Scaffold a standalone Pier experiment repository."""
 
     try:
-        init_experiment_repo(directory, name=name, force=force)
+        init_experiment_repo(directory, project_name=name, force=force)
     except ScaffoldError as exc:
         err.print(f"[red]Scaffold error:[/red] {exc}")
         raise typer.Exit(1) from exc
