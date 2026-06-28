@@ -139,22 +139,6 @@ def test_prepare_pier_job_for_run_resume_uses_latest_nested_run(tmp_path: Path):
     assert prepared.resumed
 
 
-def test_prepare_pier_job_for_run_resume_supports_legacy_flat_job(tmp_path: Path):
-    config_path = tmp_path / "job.yaml"
-    config_path.write_text("job_name: smoke\njobs_dir: jobs\n", encoding="utf-8")
-    config = load_pier_job_config(config_path, root=tmp_path)
-    legacy_job = tmp_path / "jobs" / "smoke"
-    legacy_job.mkdir(parents=True)
-    (legacy_job / "config.json").write_text("{}", encoding="utf-8")
-
-    prepared = prepare_pier_job_for_run(config, resume=True)
-
-    assert prepared.run_name == "smoke"
-    assert prepared.config.jobs_dir == tmp_path / "jobs"
-    assert prepared.config.job_name == "smoke"
-    assert prepared.resumed
-
-
 def test_preflight_pier_backend_reports_missing_docker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -229,7 +213,8 @@ def test_cli_run_fails_before_auth_when_pier_backend_preflight_fails(
     result = CliRunner().invoke(app, ["run", "--root", str(tmp_path)])
 
     assert result.exit_code == 1
-    assert "Pier backend preflight failed" in result.output
+    assert "Validation" in result.output
+    assert "smoke: backend" in result.output
     assert "Docker is unavailable" in result.output
 
 

@@ -17,47 +17,36 @@ plus a [Typer](https://typer.tiangolo.com/) CLI. It is developed with [`uv`](htt
 
 ## Repository map
 - `src/copilot_experiments/` — the package.
-  - `models.py` — pydantic models: `Experiment`, `Task`, `Variant`, `ProviderConfig`, and the
-    result objects (`ExperimentRun` → `VariantResult` → `TaskResult` → `TrialResult`, `Metrics`).
-    An experiment is `Tasks × Variants × Trials`: `task=` is single-task sugar, `tasks=[...]` a
-    suite (`Experiment.iter_tasks()` normalises both to `(task_slug, Task)` pairs).
-  - `invoker.py` — builds and runs the `copilot` command. `CopilotInvoker` shells out to the
-    real CLI; `MockInvoker` simulates a run (used by dry-runs and the test suite).
-  - `workspace.py` — provisions an isolated per-trial workspace (copy a fixture or `git clone`),
-    commits a git baseline, and captures a diff of Copilot's changes.
+  - `models.py` — pydantic models for Copilot session metrics, analysis, and token economics.
   - `sessionlog.py` — locates and parses Copilot's `events.jsonl` into `Metrics`; `extract_economics()`
     pulls token-type counts + AIU cost from `session.shutdown`.
   - `pricing.py` — AIU↔token cost math: documented per-token-type `costPerBatch` defaults, live-rate
     reading from `session.compaction_complete`, and the per-type AIU decomposition.
   - `analysis.py` — derives a rendering-agnostic `SessionAnalysis` (tools, turns, tokens, economics) from session events.
   - `render.py` — renders a `SessionAnalysis` to the terminal with Rich (backs the `analyze` command).
-  - `runner.py` — orchestration: variants × tasks × trials → result artifacts + index. Also
-    `dry_run_experiment()` (ephemeral, validating plumbing check that persists nothing).
-  - `storage.py` — the `results/` filesystem `Layout` and run discovery.
-  - `index.py` — the SQLite index (`results/index.db`) derived from the filesystem.
-  - `report.py` — aggregation, `summary.json`, and `summary.md`.
+  - `pier_backend.py` — discovers and normalizes Pier `JobConfig`s, injects auth, and runs Pier jobs.
+  - `pier_results.py` — reads Pier outputs and derives job/run/agent/task/trial summaries.
+  - `storage.py` — Pier `jobs/<job>/<run-id>/` layout and run discovery.
+  - `report.py` — renders `summary.json` and `summary.md`.
   - `scaffold.py` — `init` logic: render `templates/experiment_repo/` into a new repo.
-  - `cli.py` — the Typer app (`init`, `run`, `list`, `show`, `analyze`, `inspect`, `reindex`).
+  - `cli.py` — the Typer app (`init`, `deepswe-import`, `validate`, `run`, `list`, `show`,
+    `analyze`, `inspect`).
   - `templates/experiment_repo/` — package-data template for scaffolded experiment repos.
 - `examples/tracer_bullet/` — a committed, runnable multi-turn example experiment (textstats).
 - `examples/task_suite/` — a committed multi-task example (strtools + csvtools) exercising the
   task axis and its mean-success / resolved@k suite-coverage metrics.
-- `sandbox/` — local scratch space for exercising the lib/CLI (its `results/` are gitignored).
-- `tests/` — pytest suite (uses `MockInvoker`; **never** requires a real `copilot` or network).
+- `sandbox/` — local scratch space for exercising the lib/CLI (generated outputs are gitignored).
+- `tests/` — pytest suite (uses fixtures/mocks; **never** requires a real `copilot` or network).
 - `docs/` — architecture, authoring guide, analysis (`analyze`), results-format reference,
   BYOK/local-models guide, and `docs/adr/` (architecture decision records).
 
 ## Architecture invariants (keep these true)
-- **The filesystem is the source of truth.** `results/index.db` is a derived, rebuildable
-  cache — `reindex` must always be able to recreate it by scanning `results/`.
-- **Secrets never hit disk.** Store variants via `Variant.stored()` / `ProviderConfig.redacted()`,
-  which mask `api_key` / `bearer_token`.
-- **Tests stay offline.** Anything exercising the runner uses `MockInvoker` (optionally with a
-  `solver` callback) and a temp `--root`. Do not call the real Copilot CLI in tests.
-- **Dry-runs are ephemeral.** `dry_run_experiment()` runs the whole pipeline with `MockInvoker`
-  in a `tempfile.mkdtemp()` dir (results + session state both redirected there), validates each
-  stage produced its artifact, then deletes the temp dir. Nothing is persisted under the repo;
-  `run_experiment()` has no `dry_run` parameter.
+- **The filesystem is the source of truth.** Pier runs live under `jobs/<job>/<run-id>/`; summaries
+  are derived from that tree.
+- **Secrets never hit disk.** Auth is injected into Pier jobs at run time and redacted from persisted
+  configs.
+- **Tests stay offline.** Use Pier config/job-output fixtures and mocks. Do not call the real
+  Copilot CLI, Docker, or the network in tests.
 - **Templates are data.** Files under `templates/experiment_repo/` are shipped as package data;
   `.tmpl` files are rendered with `{{placeholder}}` substitution and lose the suffix.
 
@@ -66,7 +55,7 @@ plus a [Typer](https://typer.tiangolo.com/) CLI. It is developed with [`uv`](htt
 - `--model` / `--effort` / `--agent` / `--mode`, `--output-format json`, `--session-id <uuid>`,
   `--log-dir`, `-C <dir>`.
 - Session logs land at `~/.copilot/session-state/<session-id>/events.jsonl` — the metrics source.
-- **BYOK** is env-driven (`COPILOT_PROVIDER_*`); a variant is just flags + env.
+- **BYOK** is env-driven (`COPILOT_PROVIDER_*`) through the `copilot-cli` Pier agent kwargs/env.
 
 ## Workflow
 ```bash
@@ -77,7 +66,8 @@ uv run ruff check .                  # verify lint
 uv run pytest -q                     # test
 # End-to-end smoke test against the sandbox:
 uv run copilot-experiments init sandbox/demo --force
-uv run copilot-experiments run --root sandbox/demo --dry-run
+uv run copilot-experiments validate --root sandbox/demo
+uv run copilot-experiments run --root sandbox/demo
 uv run copilot-experiments show --last --root sandbox/demo
 ```
 For local CLI testing point `--root` at a scaffolded dir in `sandbox/` rather than `uv sync`-ing

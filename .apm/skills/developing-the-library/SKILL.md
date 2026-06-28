@@ -2,39 +2,38 @@
 name: developing-the-library
 description: >-
   Use when modifying the copilot-experiments library or CLI itself — adding or
-  changing modules (models, invoker, runner, sessionlog, storage, index, report,
-  scaffold, cli), writing tests, or updating the scaffolded experiment-repo
-  template. Not for authoring experiments.
+  changing modules (models, pier_backend, pier_results, sessionlog, storage,
+  report, scaffold, cli), writing tests, or updating the scaffolded
+  experiment-repo template. Not for authoring experiments.
 ---
 
 # Developing the copilot-experiments library
 
 ## Mental model
-A **run** executes an `Experiment` (a `Task` + a list of `Variant`s). For each variant, for each
-trial, the runner: provisions a workspace → invokes Copilot → copies & parses the session log →
-captures a workspace diff → runs `verify` → writes artifacts → updates the SQLite index.
+A **run** executes a Pier `JobConfig`. For each agent/task/attempt trial, Pier provisions the
+environment, invokes the installed agent, runs the verifier, and downloads logs/artifacts.
+`copilot-experiments` contributes the `copilot-cli` Pier agent and derives summaries/analysis from
+the resulting `jobs/<job>/<run-id>/` tree.
 
 ```
-Experiment ─┬─ Task (prompt, fixture/repo, setup, verify)
-            └─ Variant[] (model, effort, agent, mode, provider/BYOK, env, trials)
-run_experiment() → results/<exp>/<run-id>/ + results/index.db
+Pier JobConfig ─┬─ tasks/datasets
+                └─ agents[] (copilot-cli model, effort, mode, kwargs)
+copilot-experiments run → jobs/<job-name>/<run-id>/
 ```
 
 ## Where to make a change
-- New experiment-definition field → `models.py` (+ thread through `invoker.build_args`/`build_env`
-  if it affects the command, + `index.py` columns if you want it queryable).
+- New Pier config/run behavior → `pier_backend.py`.
 - New CLI command/flag → `cli.py` (Typer). `B008` is ignored project-wide for Typer defaults.
-- New metric → `sessionlog.parse_metrics` (+ `Metrics` in `models.py`, + `index.py`, + `report.py`).
-- New result artifact → write it in `runner._run_trial`, document it in `storage.py`'s docstring
-  and `docs/results-format.md`.
+- New metric → `sessionlog.parse_metrics` (+ `Metrics` in `models.py`, + `pier_results.py` /
+  `report.py` if summaries should expose it).
+- New result artifact → emit or collect it through the Pier agent/backend, then document it in
+  `docs/results-format.md`.
 - Experiment-authoring change → edit `templates/experiment_repo/` (it is package data).
 
 ## Testing recipe
 - Unit-test pure functions directly (models, sessionlog, storage, scaffold).
-- For the runner, call `run_experiment(exp, root=tmp, invoker=MockInvoker())` for a persisted
-  mock path, `run_experiment(exp, root=tmp, invoker=MockInvoker(solver=...))` for a success
-  path, and `dry_run_experiment(exp, root=tmp)` to exercise the ephemeral validating dry-run
-  (returns a `DryRunReport`, persists nothing).
+- Use Pier config and job-output fixtures for CLI/storage/result tests; mock backend/auth preflights
+  instead of invoking Docker or Copilot.
 - Build synthetic `events.jsonl` dicts to test `parse_metrics` without any Copilot run.
 - Add or update focused offline tests for each behavior change. Good coverage is expected,
   especially around Pier config loading, result adaptation, CLI behavior, and session parsing.
@@ -47,5 +46,5 @@ uv run ruff check .
 uv run pytest -q
 # optional end-to-end smoke test:
 uv run copilot-experiments init sandbox/demo --force
-uv run copilot-experiments run --root sandbox/demo --dry-run
+uv run copilot-experiments validate --root sandbox/demo
 ```

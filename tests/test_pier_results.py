@@ -8,7 +8,6 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from copilot_experiments.cli import app
-from copilot_experiments.index import connect, index_pier_job_dir
 from copilot_experiments.pier_results import (
     build_pier_summary,
     describe_missing_pier_analysis_source,
@@ -210,12 +209,12 @@ def test_build_pier_summary_reads_native_copilot_events(tmp_path: Path):
     assert summary["run_id"] == "demo-job"
     assert summary["status"] == "completed"
     assert summary["overall_success_rate"] == 1.0
-    variant = summary["variants"][0]
-    assert variant["variant"] == "copilot-cli-gpt-5-mini"
-    assert variant["avg_turns"] == 1.0
-    assert variant["avg_tool_calls"] == 1.0
-    assert variant["avg_total_tokens"] == 15.0
-    assert variant["tasks"][0]["task"] == "textstats"
+    agent = summary["agents"][0]
+    assert agent["agent"] == "copilot-cli-gpt-5-mini"
+    assert agent["avg_turns"] == 1.0
+    assert agent["avg_tool_calls"] == 1.0
+    assert agent["avg_total_tokens"] == 15.0
+    assert agent["tasks"][0]["task"] == "textstats"
 
 
 def test_build_pier_summary_reads_nested_run_identity(tmp_path: Path):
@@ -224,8 +223,8 @@ def test_build_pier_summary_reads_nested_run_identity(tmp_path: Path):
 
     summary = build_pier_summary(job_dir)
 
-    assert summary["experiment"] == "demo-job"
-    assert summary["experiment_slug"] == "demo-job"
+    assert summary["job"] == "demo-job"
+    assert summary["job_name"] == "demo-job"
     assert summary["run_id"] == "20260620-153000"
     assert summary["pier_job_id"] == "demo-job/20260620-153000"
     assert pier_job_identity(job_dir) == {
@@ -236,13 +235,14 @@ def test_build_pier_summary_reads_nested_run_identity(tmp_path: Path):
 
 
 def test_resolve_pier_trial_events(tmp_path: Path):
-    job_dir = _make_pier_job(tmp_path / "jobs" / "demo-job")
+    job_dir = _make_pier_job(tmp_path / "jobs" / "demo-job" / "20260620-153000")
+    write_pier_run_manifest(job_dir, job_name="demo-job", run_id="20260620-153000")
 
     events_path, label = resolve_pier_trial_events(job_dir)
 
     assert events_path is not None
     assert events_path.name == "events.jsonl"
-    assert label == "demo-job · copilot-cli__textstats__1"
+    assert label == "demo-job/20260620-153000 · copilot-cli__textstats__1"
 
 
 def test_build_pier_summary_reads_trajectory_when_native_events_are_absent(tmp_path: Path):
@@ -250,10 +250,10 @@ def test_build_pier_summary_reads_trajectory_when_native_events_are_absent(tmp_p
 
     summary = build_pier_summary(job_dir)
 
-    variant = summary["variants"][0]
-    assert variant["avg_turns"] == 1.0
-    assert variant["avg_tool_calls"] == 1.0
-    assert variant["avg_output_tokens"] == 7.0
+    agent = summary["agents"][0]
+    assert agent["avg_turns"] == 1.0
+    assert agent["avg_tool_calls"] == 1.0
+    assert agent["avg_output_tokens"] == 7.0
 
 
 def test_describe_missing_pier_analysis_source_explains_harness_error(tmp_path: Path):
@@ -268,12 +268,26 @@ def test_describe_missing_pier_analysis_source_explains_harness_error(tmp_path: 
 
 
 def test_cli_analyze_reads_pier_job_events(tmp_path: Path):
-    _make_pier_job(tmp_path / "jobs" / "demo-job")
+    job_dir = _make_pier_job(tmp_path / "jobs" / "demo-job" / "20260620-153000")
+    write_pier_run_manifest(job_dir, job_name="demo-job", run_id="20260620-153000")
     runner = CliRunner()
 
     result = runner.invoke(
         app,
-        ["analyze", "demo-job", "--root", str(tmp_path), "--trial", "1", "--max-turns", "5"],
+        [
+            "analyze",
+            "demo-job",
+            "--root",
+            str(tmp_path),
+            "--agent",
+            "copilot-cli",
+            "--task",
+            "textstats",
+            "--trial",
+            "1",
+            "--max-turns",
+            "5",
+        ],
     )
 
     assert result.exit_code == 0, result.output
@@ -283,12 +297,26 @@ def test_cli_analyze_reads_pier_job_events(tmp_path: Path):
 
 
 def test_cli_analyze_reads_pier_job_trajectory_when_events_are_absent(tmp_path: Path):
-    _make_pier_job_with_trajectory(tmp_path / "jobs" / "demo-job")
+    job_dir = _make_pier_job_with_trajectory(tmp_path / "jobs" / "demo-job" / "20260620-153000")
+    write_pier_run_manifest(job_dir, job_name="demo-job", run_id="20260620-153000")
     runner = CliRunner()
 
     result = runner.invoke(
         app,
-        ["analyze", "demo-job", "--root", str(tmp_path), "--trial", "1", "--max-turns", "5"],
+        [
+            "analyze",
+            "demo-job",
+            "--root",
+            str(tmp_path),
+            "--agent",
+            "copilot-cli",
+            "--task",
+            "textstats",
+            "--trial",
+            "1",
+            "--max-turns",
+            "5",
+        ],
     )
 
     assert result.exit_code == 0, result.output
@@ -298,12 +326,24 @@ def test_cli_analyze_reads_pier_job_trajectory_when_events_are_absent(tmp_path: 
 
 
 def test_cli_analyze_reports_pier_harness_error_when_logs_are_absent(tmp_path: Path):
-    _make_pier_job_with_harness_error(tmp_path / "jobs" / "demo-job")
+    job_dir = _make_pier_job_with_harness_error(tmp_path / "jobs" / "demo-job" / "20260620-153000")
+    write_pier_run_manifest(job_dir, job_name="demo-job", run_id="20260620-153000")
     runner = CliRunner()
 
     result = runner.invoke(
         app,
-        ["analyze", "demo-job", "--root", str(tmp_path), "--trial", "1"],
+        [
+            "analyze",
+            "demo-job",
+            "--root",
+            str(tmp_path),
+            "--agent",
+            "copilot-cli",
+            "--task",
+            "textstats",
+            "--trial",
+            "1",
+        ],
     )
 
     assert result.exit_code == 1
@@ -329,6 +369,40 @@ def test_cli_list_displays_pier_run_selectors(tmp_path: Path):
     assert "No runs yet" not in result.output
 
 
+def test_cli_validate_checks_pier_config(
+    tmp_path: Path,
+    monkeypatch,
+):
+    experiments = tmp_path / "experiments"
+    task = tmp_path / "tasks" / "one"
+    experiments.mkdir()
+    task.mkdir(parents=True)
+    (experiments / "job.yaml").write_text(
+        "\n".join(
+            [
+                "job_name: demo-job",
+                "jobs_dir: jobs",
+                "agents:",
+                "  - name: copilot-cli",
+                "    model_name: gpt-5-mini",
+                "tasks:",
+                "  - path: ../tasks/one",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("copilot_experiments.auth._gh_auth_token", lambda: "token")
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["validate", "--root", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    assert "Pier job configs" in result.output
+    assert "Validation" in result.output
+    assert "demo-job: agents" in result.output
+    assert "auth" in result.output
+
+
 def test_cli_show_accepts_pier_job_run_selector(tmp_path: Path):
     job_dir = _make_pier_job(tmp_path / "jobs" / "demo-job" / "20260620-153000")
     write_pier_run_manifest(job_dir, job_name="demo-job", run_id="20260620-153000")
@@ -351,12 +425,12 @@ def test_cli_show_missing_run_points_to_list(tmp_path: Path):
     result = runner.invoke(app, ["show", "missing", "--root", str(tmp_path)])
 
     assert result.exit_code == 1
-    assert "Run not found" in result.output
+    assert "Pier run not found" in result.output
     assert "copilot-experiments list" in result.output
     assert "job-name/run-id" in result.output
 
 
-def test_write_pier_summary_and_index(tmp_path: Path):
+def test_write_pier_summary(tmp_path: Path):
     job_dir = _make_pier_job(tmp_path / "jobs" / "demo-job" / "20260620-153000")
     write_pier_run_manifest(job_dir, job_name="demo-job", run_id="20260620-153000")
 
@@ -365,22 +439,6 @@ def test_write_pier_summary_and_index(tmp_path: Path):
     assert (job_dir / "summary.json").exists()
     assert (job_dir / "summary.md").exists()
     assert summary["n_trials"] == 1
-
-    conn = connect(tmp_path / "results" / "index.db")
-    try:
-        index_pier_job_dir(conn, job_dir)
-        job = conn.execute("SELECT * FROM pier_jobs WHERE id='demo-job/20260620-153000'").fetchone()
-        trial = conn.execute(
-            "SELECT * FROM pier_trials WHERE job_id='demo-job/20260620-153000'"
-        ).fetchone()
-    finally:
-        conn.close()
-
-    assert job["job_name"] == "demo-job"
-    assert job["run_id"] == "20260620-153000"
-    assert job["success_rate"] == 1.0
-    assert trial["job_name"] == "demo-job"
-    assert trial["run_id"] == "20260620-153000"
-    assert trial["trial_name"] == "copilot-cli__textstats__1"
-    assert trial["success"] == 1
-    assert trial["total_tokens"] == 15.0
+    assert summary["n_agents"] == 1
+    assert summary["agents"][0]["name"] == "copilot-cli-gpt-5-mini"
+    assert "Agent" in (job_dir / "summary.md").read_text(encoding="utf-8")

@@ -1,6 +1,6 @@
 # 0003. A derived SQLite index for cross-run queries
 
-- **Status:** Accepted
+- **Status:** Superseded by ADR-0020
 - **Date:** 2026-06-14
 
 ## Context

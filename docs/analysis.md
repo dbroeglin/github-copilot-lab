@@ -4,12 +4,11 @@ After a Pier trial runs with the local `copilot-cli` agent, the job output keeps
 Copilot CLI **session log** (`agent/copilot-session/**/events.jsonl`). `copilot-experiments`
 derives two views from that raw log:
 
-- **Flat metrics** — counters used for `summary.json`, `show`, and the SQLite index.
+- **Flat metrics** — counters used for `summary.json` and `show`.
 - **`SessionAnalysis`** — a richer, structured overview of *what happened* in the session,
   rendered by `analyze`.
 
-Legacy Python runs also persist these views as per-trial `metrics.json` and `analysis.json`; Pier
-runs derive them from the canonical job artifacts on demand.
+Pier runs derive these views from the canonical job artifacts on demand.
 
 This page covers the second one and the `analyze` command that renders it.
 
@@ -23,17 +22,17 @@ This page covers the second one and the `analyze` command that renders it.
 ## The `analyze` command
 
 ```bash
-# Most recent Pier job (first trial by default)
-uv run copilot-experiments analyze --last
+# Most recent Pier run; add selectors when multiple trials match
+uv run copilot-experiments analyze --last --agent copilot-cli --trial 1
 
 # Discover copyable selectors
 uv run copilot-experiments list
 
 # A specific Pier job's latest run / trial
-uv run copilot-experiments analyze tracer-bullet-textstats --trial 1
+uv run copilot-experiments analyze tracer-bullet-textstats --agent copilot-cli --trial 1
 
 # A specific Pier run / trial
-uv run copilot-experiments analyze tracer-bullet-textstats/20260620-153000 --trial 1
+uv run copilot-experiments analyze tracer-bullet-textstats/20260620-153000 --agent copilot-cli --trial 1
 
 # Any events.jsonl on disk — a stored trial log, or a live session under
 # ~/.copilot/session-state/<id>/events.jsonl
@@ -104,8 +103,8 @@ Warnings, if any, are shown in a panel at the bottom.
 ## The `SessionAnalysis` model
 
 `analyze_events(events) -> SessionAnalysis` ([`analysis.py`](../src/copilot_experiments/analysis.py))
-produces plain pydantic data (no formatting), so the same object backs the CLI renderer, the
-legacy `analysis.json`, and any future consumer.
+produces plain pydantic data (no formatting), so the same object backs the CLI renderer and any
+future consumer.
 
 | Field | Meaning |
 | --- | --- |

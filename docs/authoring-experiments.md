@@ -18,7 +18,6 @@ tasks/
       test.sh
       test_calculator.py
 jobs/       # Pier outputs, gitignored
-results/    # derived SQLite index, gitignored
 ```
 
 ## Task directory
@@ -119,8 +118,7 @@ Useful knobs:
 ## DeepSWE task corpora
 
 DeepSWE tasks already use the Harbor/Pier task format, including separate verifier environments.
-Do not convert them into legacy Python `Task`s. Generate a Pier job config that points at the
-DeepSWE checkout instead:
+Generate a Pier job config that points at the DeepSWE checkout:
 
 ```bash
 git clone https://github.com/datacurve-ai/deep-swe vendor/deep-swe
@@ -137,11 +135,12 @@ The generated config uses `datasets:` for a corpus and `tasks:` for a single tas
 ## Workflow
 
 ```bash
-uv run copilot-experiments run --dry-run
+uv run copilot-experiments validate
 uv run copilot-experiments run
 uv run copilot-experiments list
 uv run copilot-experiments show --last
-uv run copilot-experiments analyze --last --trial 1
+uv run copilot-experiments inspect --last
+uv run copilot-experiments analyze --last --agent copilot-cli --trial 1
 ```
 
 If you are working from a standalone experiment repo and want to use a local checkout of the
@@ -151,11 +150,11 @@ If you are working from a standalone experiment repo and want to use a local che
 ```bash
 export COPILOT_EXPERIMENTS_REPO=/path/to/github-copilot-lab
 
-uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments run --dry-run
+uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments validate
 uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments run
 uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments list
 uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments show --last
-uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments analyze --last --trial 1
+uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments analyze --last --agent copilot-cli --trial 1
 ```
 
 In PowerShell, use
@@ -163,9 +162,8 @@ In PowerShell, use
 `--from $env:COPILOT_EXPERIMENTS_REPO`. If you are iterating on the tool and need to force uv to
 rebuild from the working tree, add `--no-cache` before `--from`.
 
-`--dry-run` validates Pier configs and path normalization without starting a sandbox. The legacy
-Python experiment path still has an ephemeral mock dry-run, but Pier is the primary authoring
-model.
+`validate` checks Pier config loading, referenced task/dataset paths, backend availability, and
+Copilot auth without creating a run directory.
 
 `run` performs a lightweight backend preflight before Pier creates a job. For the default Docker
 backend it verifies that `docker`, `docker compose`, and the Docker daemon are reachable; this catches
@@ -181,7 +179,5 @@ After a run, `copilot-experiments list` prints copyable selectors. Use `job-name
 or analyze an exact Pier execution, `job-name` for that job's latest run, or `--last` for the most
 recent stored run across all jobs.
 
-## Legacy Python experiments
-
-The old `Experiment`, `Task`, and `Variant` API remains temporarily for migration and tests. It is
-used only when no Pier configs are found in `experiments/`. Do not use it for new experiment repos.
+`run` always executes Pier jobs. Native Python `Experiment`/`Task`/`Variant` experiments are no
+longer supported by the CLI.

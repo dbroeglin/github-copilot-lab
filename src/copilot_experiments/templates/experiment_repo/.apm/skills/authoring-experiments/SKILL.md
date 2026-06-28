@@ -44,5 +44,5 @@ copilot-experiments deepswe-import vendor/deep-swe --n-tasks 3 --sample-seed 0
 
 ## Validate
 ```bash
-copilot-experiments run --dry-run   # validates configs, no credits
+copilot-experiments validate   # validates configs, paths, auth, and backend setup
 ```

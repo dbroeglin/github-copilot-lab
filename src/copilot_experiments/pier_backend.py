@@ -215,28 +215,19 @@ def _job_dir(config: Any) -> Path:
 
 
 def _latest_existing_run_dir(config: Any) -> Path | None:
-    """Return the latest resumable run directory for a stable job config.
+    """Return the latest resumable run directory for a stable job config."""
 
-    New runs live at ``jobs/<job_name>/<run_id>``. A pre-migration flat
-    ``jobs/<job_name>`` directory may also exist, so keep it resumable when no
-    nested run has been created yet.
-    """
-
-    flat_dir = _job_dir(config)
-    nested_root = flat_dir
-    nested = []
-    if nested_root.is_dir():
-        nested = sorted(
+    job_group = _job_dir(config)
+    if job_group.is_dir():
+        runs = sorted(
             path
-            for path in nested_root.iterdir()
+            for path in job_group.iterdir()
             if path.is_dir()
             and (path / "config.json").exists()
             and (path / PIER_RUN_MANIFEST).exists()
         )
-    if nested:
-        return nested[-1]
-    if flat_dir.is_dir() and (flat_dir / "config.json").exists():
-        return flat_dir
+        if runs:
+            return runs[-1]
     return None
 
 

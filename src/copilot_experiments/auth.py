@@ -1,20 +1,16 @@
 """Resolve and preflight the GitHub token used to authenticate Copilot CLI.
 
 Leaving authentication to the ``copilot`` subprocess means a missing token is only
-discovered *after* a workspace has been provisioned and the CLI has spun up -- every
+discovered *after* Pier has prepared a sandbox and the CLI has spun up -- every
 trial then burns time and produces an empty session log. Instead we resolve a token
 *once* before the run starts (failing fast if none is available) and inject it into
 each trial's environment.
 
 Security -- the token must NEVER be leaked:
 
-* The resolved token is only ever placed in a child process's environment at runtime
-  (via :attr:`~copilot_experiments.invoker.Invocation.env_overrides`). It is never
-  written to a stored artifact and never logged -- only its *source* is reported.
-* The names of the variables that carry it (plus any BYOK provider secrets) are passed
-  to ``copilot --secret-env-vars`` so the CLI strips them from shell/MCP environments
-  and redacts their values from its own output: stdout, and the ``--share`` markdown
-  transcript.
+* The resolved token is only ever injected into Pier's Copilot CLI agent
+  environment at runtime. It is never written to a stored artifact and never
+  logged -- only its *source* is reported.
 """
 
 from __future__ import annotations
@@ -27,12 +23,6 @@ from dataclasses import dataclass
 
 # Token environment variables Copilot itself recognizes, in resolution precedence order.
 GITHUB_TOKEN_ENV_VARS = ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
-
-# The variable the resolved token is injected under for the Copilot child process.
-INJECTED_TOKEN_ENV_VAR = "COPILOT_GITHUB_TOKEN"
-
-# Provider (BYOK) environment variables whose values are secrets and must be redacted.
-_PROVIDER_SECRET_ENV_VARS = ("COPILOT_PROVIDER_API_KEY", "COPILOT_PROVIDER_BEARER_TOKEN")
 
 
 class AuthError(RuntimeError):
@@ -106,21 +96,3 @@ def preflight_github_token(env: Mapping[str, str] | None = None) -> TokenResolut
             f"{', '.join(GITHUB_TOKEN_ENV_VARS)}, or run 'gh auth login'."
         )
     return resolution
-
-
-def secret_env_names(variant_env: Mapping[str, str], *, byok_secrets: bool) -> list[str]:
-    """Names whose values Copilot must redact from output and strip from sub-shells.
-
-    Always includes the GitHub token variables (so an injected or inherited token is
-    never echoed). Adds BYOK provider secret variables when the variant uses a provider
-    with secrets, plus any free-form ``variant.env`` keys that look like a secret.
-    """
-    from .models import _SECRET_ENV_HINT
-
-    names: set[str] = set(GITHUB_TOKEN_ENV_VARS)
-    if byok_secrets:
-        names.update(_PROVIDER_SECRET_ENV_VARS)
-    for key in variant_env:
-        if _SECRET_ENV_HINT.search(key):
-            names.add(key)
-    return sorted(names)

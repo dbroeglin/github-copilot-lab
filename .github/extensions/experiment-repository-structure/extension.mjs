@@ -14,7 +14,7 @@ const structure = [
         owner: "human + harness",
         source: "The git checkout that contains experiment definitions and generated outputs.",
         why: "Separates experiment authoring from the copilot-experiments harness repository.",
-        commands: ["copilot-experiments list", "copilot-experiments run --dry-run"],
+        commands: ["copilot-experiments list", "copilot-experiments validate"],
     },
     {
         id: "experiments",
@@ -26,7 +26,7 @@ const structure = [
         owner: "experiment author",
         source: "Pier JobConfig YAML files.",
         why: "Defines what to run: tasks, agents, model settings, attempts, concurrency, and job_name.",
-        commands: ["copilot-experiments run --dry-run", "copilot-experiments run [job-name]"],
+        commands: ["copilot-experiments validate", "copilot-experiments run [job-name]"],
     },
     {
         id: "job-yaml",
@@ -50,7 +50,7 @@ const structure = [
         owner: "experiment author",
         source: "Harbor/Pier task directories or imported task corpora.",
         why: "Keeps task instructions, environment setup, and verifiers close to the experiment repo.",
-        commands: ["copilot-experiments deepswe-import <source>", "copilot-experiments run --dry-run"],
+        commands: ["copilot-experiments deepswe-import <source>", "copilot-experiments validate"],
     },
     {
         id: "task-dir",
@@ -62,7 +62,7 @@ const structure = [
         owner: "experiment author",
         source: "One task's prompt, environment, and verifier.",
         why: "A Pier job can point to individual tasks or datasets of many tasks.",
-        commands: ["copilot-experiments run --dry-run"],
+        commands: ["copilot-experiments validate"],
     },
     {
         id: "task-instruction",
@@ -122,7 +122,7 @@ const structure = [
         owner: "Pier + harness",
         source: "Generated run outputs. This is now the primary execution tree.",
         why: "Keeps measured executions out of git while preserving all data needed to inspect a run.",
-        commands: ["copilot-experiments list", "copilot-experiments reindex"],
+        commands: ["copilot-experiments list"],
     },
     {
         id: "job-group",
@@ -162,7 +162,7 @@ const structure = [
         owner: "copilot-experiments",
         source: "Small manifest with job_name, run_id, and job/run id.",
         why: "Pier's config sees the concrete run id as job_name; this manifest preserves the stable job identity.",
-        commands: ["copilot-experiments reindex"],
+        commands: [],
     },
     {
         id: "run-config",
@@ -185,7 +185,7 @@ const structure = [
         badge: "Pier",
         owner: "Pier",
         source: "Job-level status, timings, and aggregate Pier stats.",
-        why: "Primary job status signal for show/list/reindex.",
+        why: "Primary job status signal for show and list.",
         commands: ["copilot-experiments show <job-name>/<run-id>"],
     },
     {
@@ -320,44 +320,8 @@ const structure = [
         badge: "derived",
         owner: "copilot-experiments",
         source: "Generated from Pier result files and Copilot-native logs.",
-        why: "Gives the familiar variant/task aggregate shape for show and reports.",
+        why: "Gives the agent/task aggregate shape for show and reports.",
         commands: ["copilot-experiments show <job-name>/<run-id>"],
-    },
-    {
-        id: "results",
-        parent: "repo",
-        label: "results/",
-        path: "results/",
-        kind: "derived",
-        badge: "derived",
-        owner: "copilot-experiments",
-        source: "Derived index plus legacy Python experiment runs.",
-        why: "The SQLite index is rebuildable. Legacy run data remains readable during migration.",
-        commands: ["copilot-experiments reindex"],
-    },
-    {
-        id: "index-db",
-        parent: "results",
-        label: "index.db",
-        path: "results/index.db",
-        kind: "derived",
-        badge: "cache",
-        owner: "copilot-experiments",
-        source: "SQLite cache derived from jobs/ and legacy results/.",
-        why: "Speeds up cross-run queries; never the source of truth.",
-        commands: ["copilot-experiments reindex"],
-    },
-    {
-        id: "legacy-results",
-        parent: "results",
-        label: "<experiment>/<run-id>/...",
-        path: "results/<experiment>/<run-id>/",
-        kind: "legacy",
-        badge: "legacy",
-        owner: "legacy harness",
-        source: "Older Python Experiment/Task/Variant runs.",
-        why: "Kept for migration and historical data; new Pier runs use jobs/.",
-        commands: ["copilot-experiments show <run-id>", "copilot-experiments analyze <run-id>"],
     },
     {
         id: "guidance",
@@ -379,7 +343,7 @@ const flow = [
     ["Run", "copilot-experiments run"],
     ["Concrete output", "jobs/<job-name>/<run-id>/"],
     ["Inspect/analyze", "show | inspect | analyze <job-name>/<run-id>"],
-    ["Derived cache", "results/index.db"],
+    ["Summarize", "summary.json / summary.md"],
 ];
 
 function htmlEscape(value) {
@@ -662,7 +626,6 @@ button {
 .analysis { background: var(--true-color-red, #cf222e); }
 .derived { background: var(--true-color-yellow, #9a6700); }
 .guidance { background: var(--text-color-muted, #57606a); }
-.legacy { background: #8c959f; }
 .root { background: var(--text-color-default, #1f2328); }
 @media (max-width: 980px) {
     .flow,
@@ -707,7 +670,7 @@ button {
 <script>
 const STRUCTURE = ${data};
 const FLOW = ${flowData};
-const KINDS = ["all", "source", "task", "run", "trial", "analysis", "derived", "guidance", "legacy"];
+const KINDS = ["all", "source", "task", "run", "trial", "analysis", "derived", "guidance"];
 let selectedKind = "all";
 let selectedId = "run-dir";
 let query = "";
@@ -747,7 +710,7 @@ function renderFlow() {
 }
 
 function renderLegend() {
-    const kinds = ["source", "task", "run", "trial", "analysis", "derived", "guidance", "legacy"];
+    const kinds = ["source", "task", "run", "trial", "analysis", "derived", "guidance"];
     document.getElementById("legend").innerHTML = kinds.map(function(kind) {
         return '<span><i class="dot ' + kind + '"></i>' + esc(kind) + '</span>';
     }).join("");
@@ -863,7 +826,7 @@ await joinSession({
                     handler: async () => ({
                         layout: "Pier runs live at jobs/<job-name>/<run-id>/.",
                         selector: "Use copilot-experiments list, then pass job-name/run-id to show, inspect, or analyze.",
-                        sourceOfTruth: "jobs/ and legacy results/ on disk; results/index.db is derived.",
+                        sourceOfTruth: "jobs/<job-name>/<run-id>/ on disk; summaries are derived.",
                         nodes: structure.length,
                     }),
                 },

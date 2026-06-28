@@ -59,11 +59,12 @@ datasets:
 Validate and run it like any other Pier experiment:
 
 ```bash
-uv run copilot-experiments run --dry-run
+uv run copilot-experiments validate
 uv run copilot-experiments run deepswe-smoke
 uv run copilot-experiments list
 uv run copilot-experiments show --last
-uv run copilot-experiments analyze --last --trial 1
+uv run copilot-experiments inspect --last
+uv run copilot-experiments analyze --last --agent copilot-cli --trial 1
 ```
 
 ## Selecting tasks

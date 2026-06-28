@@ -18,7 +18,6 @@ flowchart LR
     P --> O["jobs/<job>/<run-id>/\nPier result.json + trials"]
     S --> C["Copilot-native analysis\nAIU, tokens, tools, turns"]
     O --> R["summary.json / summary.md\nshow / inspect / analyze"]
-    O --> I["results/index.db\nderived SQLite index"]
 ```
 
 - **Tasks** are Harbor/Pier task directories: `task.toml`, `instruction.md`, `environment/`,
@@ -41,8 +40,8 @@ uv run copilot-experiments init my-experiments
 cd my-experiments
 uv sync
 
-# validate Pier job configs without starting a sandbox
-uv run copilot-experiments run --dry-run
+# validate Pier job configs, paths, auth, and backend setup
+uv run copilot-experiments validate
 
 # run for real through Pier
 uv run copilot-experiments run
@@ -60,7 +59,7 @@ export COPILOT_EXPERIMENTS_REPO=/path/to/github-copilot-lab
 
 uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments init my-experiments
 cd my-experiments
-uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments run --dry-run
+uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments validate
 uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments list
 uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments show --last
 ```
@@ -88,7 +87,7 @@ selectors use `job-name/run-id`; passing just `job-name` selects that job's late
 ## Bundled examples
 
 ```bash
-uv run copilot-experiments run --root examples/tracer_bullet --dry-run
+uv run copilot-experiments validate --root examples/tracer_bullet
 uv run copilot-experiments run --root examples/tracer_bullet
 uv run copilot-experiments analyze --root examples/tracer_bullet --last
 ```
@@ -102,14 +101,13 @@ uv run copilot-experiments analyze --root examples/tracer_bullet --last
 | --- | --- |
 | `init <dir>` | Scaffold a standalone Pier experiment repository. |
 | `deepswe-import <path>` | Generate a Pier job config for a cloned DeepSWE checkout, `tasks/` corpus, or single task. |
-| `run [name]` | Discover Pier job configs in `experiments/` and run them. Each run writes to a fresh `jobs/<job>/<run-id>/` directory. Falls back to legacy Python experiments when no Pier configs exist. |
-| `run --dry-run` | Validate Pier job configs, or run the legacy ephemeral mock dry-run for legacy experiments. |
+| `validate [name]` | Validate Pier job configs, referenced task/dataset paths, auth, and backend setup without creating a run. |
+| `run [name]` | Discover Pier job configs in `experiments/` and run them. Each run writes to a fresh `jobs/<job>/<run-id>/` directory. |
 | `run --resume` | Resume an existing Pier job directory and skip already-completed matching trials. |
-| `list` | List Pier job configs, legacy experiments, and copyable run selectors. |
-| `show <selector>` / `show --last` | Print a summary for a Pier run (`job` or `job/run`) or legacy run id. |
-| `analyze <selector>` / `analyze --last` / `analyze --file <events.jsonl>` | Render a rich overview of a native Copilot session log. |
-| `inspect <selector>` | Drill into stored trials and status for a Pier run (`job` or `job/run`) or legacy run id. |
-| `reindex` | Rebuild the derived SQLite index from `jobs/` and legacy `results/`. |
+| `list` | List Pier job configs and copyable run selectors. |
+| `show <selector>` / `show --last` | Print a summary for a Pier run (`job` or `job/run`). |
+| `inspect <selector>` | Drill into stored trials by `--agent`, `--task`, and `--trial`. |
+| `analyze <selector>` / `analyze --last` / `analyze --file <events.jsonl>` | Render a rich overview of a selected Copilot session log. |
 
 ## Documentation
 
@@ -117,7 +115,7 @@ uv run copilot-experiments analyze --root examples/tracer_bullet --last
 - [`docs/authoring-experiments.md`](docs/authoring-experiments.md) - task and job authoring.
 - [`docs/deepswe.md`](docs/deepswe.md) - importing and running DeepSWE tasks through Pier.
 - [`docs/collecting-run-data.md`](docs/collecting-run-data.md) - everything to collect around a Copilot CLI run, including native `events.jsonl`, Pier artifacts, ATIF, and OTel.
-- [`docs/results-format.md`](docs/results-format.md) - `jobs/` layout and derived index.
+- [`docs/results-format.md`](docs/results-format.md) - Pier `jobs/` layout and derived summaries.
 - [`docs/analysis.md`](docs/analysis.md) - native Copilot session analysis.
 - [`docs/byok-and-local-models.md`](docs/byok-and-local-models.md) - provider env for Copilot CLI.
 - [`docs/adr/`](docs/adr) - architecture decision records.

@@ -19,7 +19,7 @@ We follow the lightweight format popularized by
 | --- | --- | --- |
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
 | [0002](0002-filesystem-is-source-of-truth.md) | The filesystem is the source of truth | Accepted; amended by ADR-0015 |
-| [0003](0003-sqlite-derived-index.md) | A derived SQLite index for cross-run queries | Accepted |
+| [0003](0003-sqlite-derived-index.md) | A derived SQLite index for cross-run queries | Superseded by ADR-0020 |
 | [0004](0004-session-log-is-primary-data-source.md) | The Copilot session log is the primary data source | Accepted |
 | [0005](0005-mock-invoker-for-offline-tests.md) | A MockInvoker keeps the harness offline-testable | Superseded by ADR-0015 for Pier runs |
 | [0006](0006-separate-analysis-data-from-rendering.md) | Separate analysis data from its rendering | Accepted |
@@ -36,3 +36,4 @@ We follow the lightweight format popularized by
 | [0017](0017-import-deepswe-as-pier-dataset.md) | Import DeepSWE as a Pier dataset config | Accepted |
 | [0018](0018-adopt-pytest-cov-for-local-coverage-analysis.md) | Adopt pytest-cov for local coverage analysis | Accepted |
 | [0019](0019-use-nested-pier-run-directories.md) | Use nested Pier run directories | Accepted |
+| [0020](0020-remove-legacy-native-harness.md) | Remove the legacy native harness | Accepted |

@@ -62,7 +62,7 @@ def force_rmtree(path: Path) -> None:
     tree contains a git workspace: paths under ``.git/objects`` can exceed the
     260-char ``MAX_PATH`` limit, and git marks object/pack files read-only. We
     prepend the ``\\\\?\\`` long-path prefix and, on error, clear the read-only
-    bit and retry, so an ephemeral dry-run can always remove its temp dir.
+    bit and retry, so temporary trees can always be removed.
     """
     if not path.exists():
         return

@@ -9,7 +9,6 @@ GitHub Copilot research experiments, powered by
 experiments/        # Pier JobConfig YAML files
 tasks/              # Harbor/Pier task directories
 jobs/               # Pier job/run outputs (gitignored)
-results/            # derived SQLite index for queries (gitignored)
 .apm/               # APM agent context (instructions, skills, prompts)
 ```
 
@@ -22,8 +21,8 @@ experiment repo:
 ```bash
 export COPILOT_EXPERIMENTS_REPO=/path/to/github-copilot-lab
 
-# validate Pier job configs without starting Docker or spending credits
-uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments run --dry-run
+# validate Pier job configs, paths, auth, and backend setup
+uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments validate
 
 # run for real through Pier (requires Copilot auth and a supported Pier backend)
 uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments run
@@ -32,8 +31,8 @@ uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments show --last
 
 # explore results
 uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments list
-uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments inspect <job-name>/<run-id> --trial 1
-uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments analyze <job-name>/<run-id> --trial 1
+uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments inspect <job-name>/<run-id> --agent copilot-cli --trial 1
+uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments analyze <job-name>/<run-id> --agent copilot-cli --trial 1
 ```
 
 In PowerShell, use
@@ -51,8 +50,8 @@ uv sync
 git clone https://github.com/datacurve-ai/deep-swe vendor/deep-swe
 uv run copilot-experiments deepswe-import vendor/deep-swe --n-tasks 3 --sample-seed 0
 
-# validate Pier job configs without starting Docker or spending credits
-uv run copilot-experiments run --dry-run
+# validate Pier job configs, paths, auth, and backend setup
+uv run copilot-experiments validate
 
 # run for real through Pier (requires Copilot auth and a supported Pier backend)
 uv run copilot-experiments run
@@ -61,8 +60,8 @@ uv run copilot-experiments show --last
 
 # explore results
 uv run copilot-experiments list
-uv run copilot-experiments inspect <job-name>/<run-id> --trial 1
-uv run copilot-experiments analyze <job-name>/<run-id> --trial 1
+uv run copilot-experiments inspect <job-name>/<run-id> --agent copilot-cli --trial 1
+uv run copilot-experiments analyze <job-name>/<run-id> --agent copilot-cli --trial 1
 ```
 
 ## Writing experiments

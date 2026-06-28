@@ -1,4 +1,4 @@
-"""Tests for the filesystem Layout helpers."""
+"""Tests for the Pier-only filesystem layout helpers."""
 
 from __future__ import annotations
 
@@ -8,74 +8,42 @@ from pathlib import Path
 from copilot_experiments.storage import Layout
 
 
-def _make_run(root: Path, exp: str, run_id: str) -> Path:
-    rd = root / "results" / exp / run_id
-    rd.mkdir(parents=True)
-    (rd / "run.json").write_text(json.dumps({"run_id": run_id}), encoding="utf-8")
-    return rd
+def _make_pier_run(root: Path, job: str, run_id: str) -> Path:
+    run_dir = root / "jobs" / job / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "config.json").write_text("{}", encoding="utf-8")
+    (run_dir / "result.json").write_text("{}", encoding="utf-8")
+    (run_dir / "copilot-experiments-run.json").write_text(
+        json.dumps({"job_name": job, "run_id": run_id, "id": f"{job}/{run_id}"}),
+        encoding="utf-8",
+    )
+    return run_dir
 
 
 def test_layout_paths(tmp_path: Path):
     layout = Layout(tmp_path)
-    assert layout.results_dir == tmp_path / "results"
-    assert layout.index_db == tmp_path / "results" / "index.db"
-    trial = layout.trial_dir("exp", "run1", "v1", "task-001", 3)
-    assert trial.name == "003"
-    assert trial.parent.name == "trials"
-    assert trial.parent.parent.name == "task-001"
-    assert trial.parent.parent.parent.name == "tasks"
-    assert trial.parent.parent.parent.parent.name == "v1"
+    assert layout.jobs_dir == tmp_path / "jobs"
+    assert layout.experiments_dir == tmp_path / "experiments"
 
 
-def test_find_and_latest_run(tmp_path: Path):
-    _make_run(tmp_path, "exp", "20260101T000000Z_aaa111")
-    rd2 = _make_run(tmp_path, "exp", "20260102T000000Z_bbb222")
-    layout = Layout(tmp_path)
-
-    assert layout.latest_run() == rd2
-    assert layout.find_run("20260102T000000Z_bbb222") == rd2
-    # Unique prefix resolves.
-    assert layout.find_run("20260101") is not None
-    # Unknown id returns None.
-    assert layout.find_run("nope") is None
-
-
-def test_iter_runs_skips_incomplete(tmp_path: Path):
-    _make_run(tmp_path, "exp", "good")
-    (tmp_path / "results" / "exp" / "incomplete").mkdir(parents=True)
-    layout = Layout(tmp_path)
-    ids = [rid for _, rid, _ in layout.iter_runs()]
-    assert ids == ["good"]
-
-
-def test_pier_job_helpers(tmp_path: Path):
-    jobs = tmp_path / "jobs"
-    good = jobs / "smoke" / "20260102-000000"
-    good.mkdir(parents=True)
-    (good / "config.json").write_text("{}", encoding="utf-8")
-    (good / "result.json").write_text("{}", encoding="utf-8")
-    latest = jobs / "smoke" / "20260103-000000"
-    latest.mkdir()
-    (latest / "config.json").write_text("{}", encoding="utf-8")
-    (latest / "result.json").write_text("{}", encoding="utf-8")
-    incomplete = jobs / "smoke" / "20260104-000000"
+def test_pier_run_helpers(tmp_path: Path):
+    old = _make_pier_run(tmp_path, "smoke", "20260102-000000")
+    latest = _make_pier_run(tmp_path, "smoke", "20260103-000000")
+    other = _make_pier_run(tmp_path, "other", "20260104-000000")
+    incomplete = tmp_path / "jobs" / "smoke" / "20260105-000000"
     incomplete.mkdir()
-    legacy = jobs / "legacy-job"
-    legacy.mkdir()
-    (legacy / "config.json").write_text("{}", encoding="utf-8")
-    (legacy / "result.json").write_text("{}", encoding="utf-8")
-    legacy_trial = legacy / "copilot-cli__task__1"
-    legacy_trial.mkdir()
-    (legacy_trial / "config.json").write_text("{}", encoding="utf-8")
-    (legacy_trial / "result.json").write_text("{}", encoding="utf-8")
+    flat_legacy = tmp_path / "jobs" / "legacy-job"
+    flat_legacy.mkdir()
+    (flat_legacy / "config.json").write_text("{}", encoding="utf-8")
+    (flat_legacy / "result.json").write_text("{}", encoding="utf-8")
 
     layout = Layout(tmp_path)
 
-    assert layout.iter_pier_jobs() == [legacy, good, latest]
-    assert layout.pier_job_key(good) == "smoke/20260102-000000"
+    assert layout.iter_pier_jobs() == [other, old, latest]
+    assert layout.pier_job_key(old) == "smoke/20260102-000000"
     assert layout.latest_pier_job() == latest
     assert layout.find_pier_job("smoke") == latest
-    assert layout.find_pier_job("smoke/20260102") == good
-    assert layout.find_pier_job("20260102") == good
-    assert layout.find_pier_job("legacy-job") == legacy
+    assert layout.find_pier_job("smoke/20260102") == old
+    assert layout.find_pier_job("20260102") == old
+    assert layout.find_pier_job("legacy-job") is None
     assert layout.find_pier_job("missing") is None

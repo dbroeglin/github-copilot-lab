@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import importlib.util
 import sys
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 
 import typer
 from rich.console import Console
@@ -17,11 +14,9 @@ from ._util import read_json
 from .analysis import analyze_events, analyze_trajectory
 from .auth import AuthError, preflight_github_token
 from .deepswe import DeepSweImportError, write_deepswe_job_config
-from .index import list_runs as index_list_runs
-from .index import reindex as index_reindex
-from .models import DryRunReport, Experiment, ExperimentRun
 from .pier_backend import (
     PierBackendPreflightError,
+    PierJobSpec,
     discover_pier_job_configs,
     inject_copilot_token,
     preflight_pier_backend,
@@ -37,20 +32,14 @@ from .pier_results import (
     write_pier_summary,
 )
 from .render import render_session_analysis
-from .runner import dry_run_experiment, run_experiment
 from .scaffold import ScaffoldError, init_experiment_repo
 from .sessionlog import load_events
 from .storage import Layout
 
 
 def _force_utf8_streams() -> None:
-    """Make stdout/stderr UTF-8 so Rich glyphs (e.g. ``✓``) don't crash.
+    """Make stdout/stderr UTF-8 so Rich glyphs do not crash on Windows."""
 
-    On Windows the console and redirected pipes default to a legacy code page
-    (cp1252), which raises ``UnicodeEncodeError`` on non-Latin-1 characters.
-    ``errors="replace"`` is a belt-and-braces fallback for any remaining
-    unencodable glyph.
-    """
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is not None:
@@ -64,7 +53,7 @@ _force_utf8_streams()
 
 app = typer.Typer(
     add_completion=False,
-    help="Build and analyze GitHub Copilot research experiments.",
+    help="Create, run, and analyze Pier jobs that evaluate GitHub Copilot CLI agents.",
     no_args_is_help=True,
 )
 console = Console()
@@ -73,83 +62,37 @@ err = Console(stderr=True)
 
 @dataclass(frozen=True)
 class ResolvedRun:
-    kind: Literal["legacy", "pier"]
     path: Path
     selector: str
 
 
-# --------------------------------------------------------------------------- #
-# Experiment discovery
-# --------------------------------------------------------------------------- #
-def _load_experiments(experiments_dir: Path) -> list[tuple[Path, Experiment]]:
-    """Import every ``*.py`` under ``experiments/`` and collect Experiment objects.
-
-    A module contributes experiments via a module-level ``experiment`` (single),
-    ``experiments`` (iterable), a ``get_experiments()`` function, or any
-    module-level :class:`Experiment` instances.
-    """
-    found: list[tuple[Path, Experiment]] = []
-    if not experiments_dir.is_dir():
-        return found
-
-    root = experiments_dir.parent.resolve()
-    if str(root) not in sys.path:
-        sys.path.insert(0, str(root))
-
-    for path in sorted(experiments_dir.glob("*.py")):
-        if path.name.startswith("_"):
-            continue
-        module = _import_path(path)
-        candidates: list[object] = []
-        if hasattr(module, "get_experiments"):
-            candidates.extend(list(module.get_experiments()))
-        if hasattr(module, "experiments"):
-            candidates.extend(list(module.experiments))
-        if hasattr(module, "experiment"):
-            candidates.append(module.experiment)
-        if not candidates:
-            candidates = [v for v in vars(module).values() if isinstance(v, Experiment)]
-        seen: set[int] = set()
-        for obj in candidates:
-            if isinstance(obj, Experiment) and id(obj) not in seen:
-                seen.add(id(obj))
-                found.append((path, obj))
-    return found
+@dataclass(frozen=True)
+class ValidationCheck:
+    name: str
+    ok: bool
+    detail: str = ""
 
 
-def _import_path(path: Path):
-    name = f"copilot_experiments_user_{path.stem}"
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise typer.BadParameter(f"Cannot import experiment module: {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-# --------------------------------------------------------------------------- #
-# Commands
-# --------------------------------------------------------------------------- #
 @app.command()
 def init(
-    directory: Path = typer.Argument(..., help="Directory for the new experiment repository."),
-    name: str | None = typer.Option(None, "--name", help="Project name (defaults to dir name)."),
-    force: bool = typer.Option(
-        False, "--force", help="Scaffold even if the directory is not empty."
-    ),
+    directory: Path = typer.Argument(..., help="Directory to create or update."),
+    name: str | None = typer.Option(None, "--name", help="Project/package name."),
+    force: bool = typer.Option(False, "--force", help="Overwrite existing scaffolded files."),
 ) -> None:
-    """Scaffold a new, standalone experiment repository."""
+    """Scaffold a standalone Pier experiment repository."""
+
     try:
-        created = init_experiment_repo(directory, project_name=name, force=force)
+        init_experiment_repo(directory, name=name, force=force)
     except ScaffoldError as exc:
-        err.print(f"[red]error:[/red] {exc}")
+        err.print(f"[red]Scaffold error:[/red] {exc}")
         raise typer.Exit(1) from exc
-    console.print(f"[green]Created {len(created)} files in[/green] {directory}")
-    console.print("\nNext steps:")
+
+    console.print(f"[green]Initialized[/green] Pier experiment repository at {directory}")
+    console.print("Next steps:")
     console.print(f"  cd {directory}")
     console.print("  uv sync")
-    console.print("  uv run copilot-experiments run --dry-run")
+    console.print("  uv run copilot-experiments validate")
+    console.print("  uv run copilot-experiments run")
 
 
 @app.command("deepswe-import")
@@ -250,141 +193,51 @@ def deepswe_import(
         f"[dim]source:[/dim] {result.source.path} "
         f"({source_label}, {result.source.task_count} {task_label})"
     )
-    console.print("[dim]validate:[/dim] uv run copilot-experiments run --dry-run")
+    console.print("[dim]validate:[/dim] uv run copilot-experiments validate")
+
+
+@app.command()
+def validate(
+    name: str | None = typer.Argument(None, help="Only validate this Pier job name or file stem."),
+    root: Path | None = typer.Option(None, "--root", help="Experiment repository root."),
+) -> None:
+    """Validate Pier job configs, local paths, auth, and backend preflight checks."""
+
+    root = Path(root or Path.cwd())
+    specs = _require_pier_specs(root, name=name)
+    checks = _validate_pier_specs(specs)
+    _print_job_config_table(root, specs)
+    _print_validation_checks(checks)
+    if not all(check.ok for check in checks):
+        raise typer.Exit(1)
 
 
 @app.command()
 def run(
-    name: str | None = typer.Argument(None, help="Only run the experiment with this name/slug."),
+    name: str | None = typer.Argument(None, help="Only run this Pier job name or file stem."),
     root: Path | None = typer.Option(None, "--root", help="Experiment repository root."),
-    dry_run: bool = typer.Option(
-        False,
-        "--dry-run",
-        help="Validate the whole pipeline in a throwaway dir and persist nothing.",
-    ),
-    copilot_binary: str = typer.Option("copilot", "--copilot", help="Path to the copilot binary."),
     verbose: bool = typer.Option(
         False,
         "--verbose",
         "-v",
-        help="Enable debug-level Pier output. Legacy experiments also stream Copilot output.",
+        help="Enable debug-level Pier output.",
     ),
     resume: bool = typer.Option(
         False,
         "--resume",
-        help=(
-            "Resume an existing Pier job directory instead of creating a fresh rerun when the "
-            "configured job name already exists."
-        ),
+        help="Resume the latest existing run for the selected Pier job when possible.",
     ),
 ) -> None:
-    """Discover and run experiment(s) defined under ``experiments/``.
+    """Run Pier job config(s) defined under ``experiments/``."""
 
-    With ``--dry-run`` the full pipeline is exercised with the mock invoker inside a
-    temporary directory, each stage is validated, and everything is deleted again --
-    no run is recorded under ``results/``.
-
-    Pier configs create a fresh job directory on rerun when the configured job name
-    already exists. Pass ``--resume`` to opt into Pier's native resume behavior, which
-    skips trials that already completed for the same resolved config.
-    """
     root = Path(root or Path.cwd())
-    layout = Layout(root)
-    pier_specs = discover_pier_job_configs(root, name=name)
-    if pier_specs:
-        if dry_run:
-            table = Table(title="Pier job configs", show_edge=False)
-            table.add_column("job")
-            table.add_column("config")
-            table.add_column("tasks", justify="right")
-            table.add_column("agents", justify="right")
-            for spec in pier_specs:
-                table.add_row(
-                    spec.name,
-                    str(spec.path.relative_to(root)),
-                    str(len(spec.config.tasks) + len(spec.config.datasets)),
-                    str(len(spec.config.agents)),
-                )
-            console.print(table)
-            console.print("[green]Pier config validation OK[/green] [dim]— no job was run[/dim]")
-            raise typer.Exit(0)
-
-        try:
-            for spec in pier_specs:
-                preflight_pier_backend(spec.config)
-        except PierBackendPreflightError as exc:
-            err.print(f"[red]Pier backend preflight failed:[/red] {exc}")
-            raise typer.Exit(1) from exc
-
-        try:
-            auth = preflight_github_token()
-        except AuthError as exc:
-            err.print(f"[red]Authentication error:[/red] {exc}")
-            raise typer.Exit(1) from exc
-        console.print(f"[dim]auth:[/dim] using GitHub token from {auth.source}")
-
-        any_failures = False
-        for spec in pier_specs:
-            prepared = prepare_pier_job_for_run(spec.config, resume=resume)
-            if verbose:
-                prepared.config.debug = True
-            inject_copilot_token(prepared.config, auth.token)
-            console.print(f"[bold]Running Pier job[/bold] {prepared.label}")
-            if prepared.resumed:
-                console.print(f"[dim]resume:[/dim] reusing existing Pier run {prepared.label}")
-            else:
-                console.print(
-                    f"[dim]run:[/dim] writing fresh run to "
-                    f"{Path(prepared.config.jobs_dir) / prepared.run_name}"
-                )
-            try:
-                run_result = run_pier_job(prepared.config)
-            except Exception as exc:
-                err.print(f"[red]Pier job failed:[/red] {type(exc).__name__}: {exc}")
-                any_failures = True
-                continue
-            write_pier_run_manifest(
-                run_result.job_dir,
-                job_name=prepared.requested_name,
-                run_id=prepared.run_name,
-            )
-            summary = write_pier_summary(run_result.job_dir)
-            _print_run_summary(summary)
-            _warn_failed_pier_trials(run_result.job_dir)
-            if summary.get("status") != "completed":
-                any_failures = True
-            console.print(f"[dim]results:[/dim] {run_result.job_dir}\n")
-
-        if any_failures:
-            raise typer.Exit(2)
-        raise typer.Exit(0)
-
-    experiments = _load_experiments(layout.experiments_dir)
-    if not experiments:
-        err.print(f"[yellow]No experiments found in[/yellow] {layout.experiments_dir}")
+    specs = _require_pier_specs(root, name=name)
+    checks = _validate_pier_specs(specs)
+    failed_checks = [check for check in checks if not check.ok]
+    if failed_checks:
+        _print_validation_checks(checks)
         raise typer.Exit(1)
 
-    if name:
-        experiments = [(p, e) for p, e in experiments if name in (e.name, e.slug)]
-        if not experiments:
-            err.print(f"[red]No experiment matched[/red] {name!r}")
-            raise typer.Exit(1)
-
-    if dry_run:
-        all_ok = True
-        for _path, experiment in experiments:
-            console.print(
-                f"[bold]Dry-run[/bold] {experiment.name} "
-                f"({len(experiment.variants)} variant(s)) [dim]— validating plumbing[/dim]"
-            )
-            report = dry_run_experiment(experiment, root=root)
-            _print_dry_run_report(report)
-            all_ok = all_ok and report.ok
-        raise typer.Exit(0 if all_ok else 1)
-
-    # Preflight authentication ONCE so a missing token aborts immediately instead of
-    # failing every trial after provisioning. The token is injected into each trial's
-    # environment; it is never logged (only its source) or persisted.
     try:
         auth = preflight_github_token()
     except AuthError as exc:
@@ -393,29 +246,37 @@ def run(
     console.print(f"[dim]auth:[/dim] using GitHub token from {auth.source}")
 
     any_failures = False
-    for _path, experiment in experiments:
-        console.print(
-            f"[bold]Running[/bold] {experiment.name} ({len(experiment.variants)} variant(s))"
-        )
-        progress = _make_progress() if verbose else None
-        copilot_stream = _make_copilot_stream() if verbose else None
-        run_obj = run_experiment(
-            experiment,
-            root=root,
-            copilot_binary=copilot_binary,
-            github_token=auth.token,
-            progress=progress,
-            copilot_stream=copilot_stream,
-        )
-        summary = read_json(layout.run_dir(experiment.slug, run_obj.run_id) / "summary.json")
-        _print_run_summary(summary)
-        _warn_failed_trials(layout, experiment, run_obj)
-        if run_obj.status != "completed":
+    for spec in specs:
+        prepared = prepare_pier_job_for_run(spec.config, resume=resume)
+        if verbose:
+            prepared.config.debug = True
+        inject_copilot_token(prepared.config, auth.token)
+        console.print(f"[bold]Running Pier job[/bold] {prepared.label}")
+        if prepared.resumed:
+            console.print(f"[dim]resume:[/dim] reusing existing Pier run {prepared.label}")
+        else:
+            console.print(
+                f"[dim]run:[/dim] writing fresh run to "
+                f"{Path(prepared.config.jobs_dir) / prepared.run_name}"
+            )
+        try:
+            run_result = run_pier_job(prepared.config)
+        except Exception as exc:
+            err.print(f"[red]Pier job failed:[/red] {type(exc).__name__}: {exc}")
             any_failures = True
-        console.print(f"[dim]results:[/dim] {layout.run_dir(experiment.slug, run_obj.run_id)}\n")
+            continue
+        write_pier_run_manifest(
+            run_result.job_dir,
+            job_name=prepared.requested_name,
+            run_id=prepared.run_name,
+        )
+        summary = write_pier_summary(run_result.job_dir)
+        _print_run_summary(summary)
+        _warn_failed_pier_trials(run_result.job_dir)
+        if summary.get("status") != "completed":
+            any_failures = True
+        console.print(f"[dim]results:[/dim] {run_result.job_dir}\n")
 
-    # A distinct exit code (2) lets scripts tell harness/infra trouble apart from a
-    # clean run (0) and usage errors like "no experiments found" (1).
     if any_failures:
         raise typer.Exit(2)
 
@@ -424,71 +285,39 @@ def run(
 def list_cmd(
     root: Path | None = typer.Option(None, "--root", help="Experiment repository root."),
 ) -> None:
-    """List experiment definitions and concrete run selectors."""
+    """List Pier job configs and concrete run selectors."""
+
     root = Path(root or Path.cwd())
+    specs = discover_pier_job_configs(root)
+    if specs:
+        _print_job_config_table(root, specs)
+
     layout = Layout(root)
-    pier_specs = discover_pier_job_configs(root)
-    if pier_specs:
-        table = Table(title="Pier job configs", show_edge=False)
-        table.add_column("job")
-        table.add_column("config")
-        table.add_column("tasks", justify="right")
-        table.add_column("agents", justify="right")
-        for spec in pier_specs:
-            table.add_row(
-                spec.name,
-                str(spec.path.relative_to(root)),
-                str(len(spec.config.tasks) + len(spec.config.datasets)),
-                str(len(spec.config.agents)),
-            )
-        console.print(table)
-
-    experiments = _load_experiments(layout.experiments_dir)
-    if experiments:
-        table = Table(title="Experiments", show_edge=False)
-        table.add_column("name")
-        table.add_column("slug")
-        table.add_column("variants", justify="right")
-        for _path, exp in experiments:
-            table.add_row(exp.name, exp.slug, str(len(exp.variants)))
-        console.print(table)
-
-    runs = index_list_runs(layout)
-    pier_jobs = layout.iter_pier_jobs()
-    if runs:
-        table = Table(title="Experiment runs")
-        table.add_column("selector")
-        table.add_column("experiment")
-        table.add_column("started")
-        table.add_column("trials", justify="right")
-        table.add_column("success", justify="right")
-        for r in runs:
-            sr = r.get("success_rate")
-            table.add_row(
-                r["run_id"],
-                r["experiment_slug"],
-                (r.get("started_at") or "")[:19],
-                str(r.get("n_trials") or 0),
-                "-" if sr is None else f"{sr * 100:.0f}%",
-            )
-        console.print(table)
-
-    if not pier_jobs:
-        if not runs:
-            console.print("[dim]No runs yet.[/dim]")
+    runs = layout.iter_pier_jobs()
+    if not runs:
+        console.print("[dim]No runs yet.[/dim]")
         return
+
     table = Table(title="Pier runs")
     table.add_column("selector (job/run)", no_wrap=True)
+    table.add_column("job")
+    table.add_column("run")
     table.add_column("started")
+    table.add_column("agents", justify="right")
+    table.add_column("tasks", justify="right")
     table.add_column("trials", justify="right")
     table.add_column("success", justify="right")
     table.add_column("status")
-    for job_dir in pier_jobs:
+    for job_dir in runs:
         summary = write_pier_summary(job_dir)
         sr = summary.get("overall_success_rate")
         table.add_row(
             str(summary.get("pier_job_id") or pier_job_label(job_dir)),
+            str(summary.get("job") or "-"),
+            str(summary.get("run_id") or "-"),
             (summary.get("started_at") or "")[:19],
+            str(summary.get("n_agents") or 0),
+            str(summary.get("n_tasks") or 0),
             str(summary.get("n_trials") or 0),
             "-" if sr is None else f"{sr * 100:.0f}%",
             str(summary.get("status") or "-"),
@@ -500,27 +329,16 @@ def list_cmd(
 def show(
     selector: str | None = typer.Argument(
         None,
-        help=(
-            "Run selector from `list`: run id/prefix for legacy runs, Pier job for that "
-            "job's latest run, or Pier job/run id."
-        ),
+        help="Pier run selector from `list`: job, run id/prefix, or job/run.",
     ),
-    last: bool = typer.Option(False, "--last", help="Show the most recent stored run."),
+    last: bool = typer.Option(False, "--last", help="Show the most recent stored Pier run."),
     root: Path | None = typer.Option(None, "--root", help="Experiment repository root."),
 ) -> None:
-    """Print a run summary and per-variant comparison."""
-    root = Path(root or Path.cwd())
-    layout = Layout(root)
-    resolved = _resolve_run(layout, last=last, selector=selector)
-    if resolved is None:
-        _print_run_not_found(selector)
-        raise typer.Exit(1)
-    if resolved.kind == "pier":
-        summary = write_pier_summary(resolved.path)
-        _print_run_summary(summary)
-        console.print(f"\n[dim]{resolved.path / 'summary.md'}[/dim]")
-        return
-    _print_run_summary(read_json(resolved.path / "summary.json"))
+    """Print a Pier run summary and per-agent comparison."""
+
+    resolved = _resolve_or_exit(root, selector, last=last)
+    summary = write_pier_summary(resolved.path)
+    _print_run_summary(summary)
     console.print(f"\n[dim]{resolved.path / 'summary.md'}[/dim]")
 
 
@@ -528,124 +346,69 @@ def show(
 def inspect(
     selector: str | None = typer.Argument(
         None,
-        help=(
-            "Run selector from `list`: run id/prefix for legacy runs, Pier job for that "
-            "job's latest run, or Pier job/run id."
-        ),
+        help="Pier run selector from `list`: job, run id/prefix, or job/run.",
     ),
-    variant: str | None = typer.Option(None, "--variant", help="Variant slug."),
-    task: str | None = typer.Option(None, "--task", help="Task slug."),
-    trial: int | None = typer.Option(None, "--trial", help="Trial number."),
-    events: int = typer.Option(20, "--events", help="Number of session events to show."),
-    last: bool = typer.Option(False, "--last", help="Inspect the most recent stored run."),
+    agent: str | None = typer.Option(None, "--agent", help="Agent selector."),
+    task: str | None = typer.Option(None, "--task", help="Task selector."),
+    trial: str | None = typer.Option(None, "--trial", help="Trial number or Pier trial name."),
+    last: bool = typer.Option(False, "--last", help="Inspect the most recent stored Pier run."),
     root: Path | None = typer.Option(None, "--root", help="Experiment repository root."),
 ) -> None:
-    """Drill into a run's variants, tasks, trials, and session events."""
-    root = Path(root or Path.cwd())
-    layout = Layout(root)
-    resolved = _resolve_run(layout, last=last, selector=selector)
-    if resolved is None:
-        _print_run_not_found(selector)
+    """Drill into a Pier run's agents, tasks, and trials."""
+
+    resolved = _resolve_or_exit(root, selector, last=last)
+    summary = write_pier_summary(resolved.path)
+    console.print(f"[bold]Pier run[/bold]: {pier_job_label(resolved.path)}")
+    console.print(f"[bold]summary[/bold]: {resolved.path / 'summary.json'}")
+
+    rows = _matching_trial_rows(resolved.path, agent=agent, task=task, trial=trial)
+    if not rows:
+        err.print("[red]No matching Pier trials.[/red]")
+        _print_trial_filter_hint()
         raise typer.Exit(1)
-    if resolved.kind == "pier":
-        _inspect_pier_job(resolved.path)
-        return
-    run_dir = resolved.path
 
-    variants_dir = run_dir / "variants"
-    if variant is None:
-        table = Table(title=f"Variants in {run_dir.name}")
-        table.add_column("variant")
-        table.add_column("tasks", justify="right")
-        table.add_column("trials", justify="right")
-        for vdir in sorted(variants_dir.iterdir()):
-            tasks = sorted((vdir / "tasks").glob("*")) if (vdir / "tasks").is_dir() else []
-            n_trials = sum(
-                len(sorted((tk / "trials").glob("*"))) if (tk / "trials").is_dir() else 0
-                for tk in tasks
-            )
-            table.add_row(vdir.name, str(len(tasks)), str(n_trials))
-        console.print(table)
-        return
-
-    tasks_dir = variants_dir / variant / "tasks"
-    if task is None:
-        table = Table(title=f"Tasks in {variant}")
-        table.add_column("task")
-        table.add_column("trials", justify="right")
-        for tkdir in sorted(tasks_dir.iterdir()) if tasks_dir.is_dir() else []:
-            trials = sorted((tkdir / "trials").glob("*")) if (tkdir / "trials").is_dir() else []
-            table.add_row(tkdir.name, str(len(trials)))
-        console.print(table)
-        return
-
-    trials_dir = tasks_dir / task / "trials"
-    if trial is None:
-        table = Table(title=f"Trials in {variant}/{task}")
-        table.add_column("trial")
-        table.add_column("status")
-        table.add_column("success")
-        table.add_column("exit")
-        table.add_column("duration (s)", justify="right")
-        for tdir in sorted(trials_dir.iterdir()) if trials_dir.is_dir() else []:
-            meta = read_json(tdir / "meta.json")
-            table.add_row(
-                tdir.name,
-                str(meta.get("status", "-")),
-                str(meta.get("success")),
-                str(meta.get("exit_code")),
-                f"{meta.get('duration_s', 0):.2f}",
-            )
-        console.print(table)
-        return
-
-    tdir = trials_dir / f"{trial:03d}"
-    if not tdir.is_dir():
-        err.print(f"[red]Trial not found:[/red] {tdir}")
-        raise typer.Exit(1)
-    console.print(f"[bold]meta[/bold]: {read_json(tdir / 'meta.json')}")
-    meta = read_json(tdir / "meta.json")
-    if meta.get("status") and meta["status"] != "ok":
-        artifact = meta.get("error_artifact") or "stdout.txt"
-        console.print(
-            f"[yellow]status[/yellow]: {meta['status']} — {meta.get('error') or ''}\n"
-            f"  -> {tdir / artifact}"
+    _print_trials_table(rows, title=f"Trials in {pier_job_label(resolved.path)}")
+    if len(rows) == 1:
+        row = rows[0]
+        console.print(f"\n[bold]selected[/bold]: {row['trial_dir']}")
+        console.print(f"[bold]agent[/bold]: {row['agent']}")
+        console.print(f"[bold]task[/bold]: {row['task']}")
+        console.print(f"[bold]result[/bold]: {resolved.path / row['trial_dir'] / 'result.json'}")
+        source_path, _label, source_kind, _otel_path = resolve_pier_trial_analysis_source(
+            resolved.path, row["trial_dir"]
         )
-    console.print(f"[bold]metrics[/bold]: {read_json(tdir / 'metrics.json')}")
-    if (tdir / "verify.json").exists():
-        verify = read_json(tdir / "verify.json")
+        if source_path is not None:
+            console.print(f"[bold]analysis source[/bold]: {source_kind} · {source_path}")
+    elif agent or task or trial:
         console.print(
-            f"[bold]verify[/bold]: exit={verify['exit_code']} success={verify['success']}"
+            "\n[yellow]Multiple trials match.[/yellow] Add more filters, for example "
+            "`--agent`, `--task`, and `--trial`."
         )
-    evs = load_events(tdir / "events.jsonl")
-    console.print(f"\n[bold]events[/bold] (showing up to {events} of {len(evs)}):")
-    for ev in evs[:events]:
-        console.print(f"  {ev.get('timestamp', '')[:23]:23}  {ev.get('type')}")
+    else:
+        _print_run_summary(summary)
 
 
 @app.command()
 def analyze(
     selector: str | None = typer.Argument(
         None,
-        help=(
-            "Run selector from `list`: run id/prefix for legacy runs, Pier job for that "
-            "job's latest run, or Pier job/run id."
-        ),
+        help="Pier run selector from `list`: job, run id/prefix, or job/run.",
     ),
-    variant: str | None = typer.Option(None, "--variant", help="Variant slug (default: first)."),
-    task: str | None = typer.Option(None, "--task", help="Task slug (default: first)."),
-    trial: int | None = typer.Option(None, "--trial", help="Trial number (default: first)."),
+    agent: str | None = typer.Option(None, "--agent", help="Agent selector."),
+    task: str | None = typer.Option(None, "--task", help="Task selector."),
+    trial: str | None = typer.Option(None, "--trial", help="Trial number or Pier trial name."),
     file: Path | None = typer.Option(
-        None, "--file", help="Analyze an events.jsonl file directly (ignores run/variant/trial)."
+        None, "--file", help="Analyze an events.jsonl file directly (ignores run filters)."
     ),
     otel_file: Path | None = typer.Option(
         None, "--otel-file", help="Optional Copilot OTel JSONL file to enrich analysis."
     ),
-    last: bool = typer.Option(False, "--last", help="Analyze the most recent stored run."),
+    last: bool = typer.Option(False, "--last", help="Analyze the most recent stored Pier run."),
     max_turns: int = typer.Option(0, "--max-turns", help="Limit timeline rows (0 = all)."),
     root: Path | None = typer.Option(None, "--root", help="Experiment repository root."),
 ) -> None:
-    """Analyze a captured session log and render a rich overview of what happened."""
+    """Analyze a captured Copilot CLI session from a Pier trial."""
+
     if file is not None:
         events = load_events(file)
         if not events:
@@ -657,331 +420,275 @@ def analyze(
         )
         return
 
+    resolved = _resolve_or_exit(root, selector, last=last, file_hint=True)
+    rows = _matching_trial_rows(resolved.path, agent=agent, task=task, trial=trial)
+    if not rows:
+        err.print("[red]No matching Pier trials.[/red]")
+        _print_trial_filter_hint()
+        raise typer.Exit(1)
+    if len(rows) > 1:
+        err.print("[red]Multiple Pier trials match.[/red]")
+        _print_trials_table(rows, title="Matching trials")
+        err.print("[dim]Add --agent, --task, and/or --trial to select exactly one trial.[/dim]")
+        raise typer.Exit(1)
+
+    row = rows[0]
+    source_path, label, source_kind, discovered_otel = resolve_pier_trial_analysis_source(
+        resolved.path, row["trial_dir"]
+    )
+    if source_path is None:
+        err.print(f"[red]No Copilot session log or trajectory found in[/red] {resolved.path}")
+        diagnostic = describe_missing_pier_analysis_source(resolved.path, row["trial_dir"])
+        if diagnostic:
+            err.print(f"[yellow]{diagnostic}[/yellow]")
+        raise typer.Exit(1)
+
+    selected_otel = otel_file or discovered_otel
+    analysis = (
+        analyze_events(
+            load_events(source_path),
+            load_events(selected_otel) if selected_otel is not None else None,
+        )
+        if source_kind == "events"
+        else analyze_trajectory(read_json(source_path))
+    )
+    render_session_analysis(analysis, console, title=label, max_turns=max_turns)
+
+
+def _require_pier_specs(root: Path, *, name: str | None = None) -> list[PierJobSpec]:
+    specs = discover_pier_job_configs(root, name=name)
+    if specs:
+        return specs
+    target = f" matching {name!r}" if name else ""
+    err.print(f"[red]No Pier job configs{target} found in[/red] {root / 'experiments'}")
+    err.print("[dim]Create one with `copilot-experiments init` or `deepswe-import`.[/dim]")
+    raise typer.Exit(1)
+
+
+def _validate_pier_specs(specs: list[PierJobSpec]) -> list[ValidationCheck]:
+    checks: list[ValidationCheck] = []
+    for spec in specs:
+        prefix = spec.name
+        task_count = len(spec.config.tasks) + len(spec.config.datasets)
+        agent_count = len(spec.config.agents)
+        checks.append(
+            ValidationCheck(
+                f"{prefix}: agents",
+                agent_count > 0,
+                f"{agent_count} configured" if agent_count else "no agents configured",
+            )
+        )
+        checks.append(
+            ValidationCheck(
+                f"{prefix}: tasks",
+                task_count > 0,
+                f"{task_count} configured" if task_count else "no tasks or datasets configured",
+            )
+        )
+        for path in _local_task_paths(spec):
+            checks.append(
+                ValidationCheck(
+                    f"{prefix}: path {path.name}",
+                    path.exists(),
+                    str(path) if path.exists() else f"missing: {path}",
+                )
+            )
+        try:
+            preflight_pier_backend(spec.config)
+        except PierBackendPreflightError as exc:
+            checks.append(ValidationCheck(f"{prefix}: backend", False, str(exc)))
+        else:
+            checks.append(ValidationCheck(f"{prefix}: backend", True, "preflight OK"))
+
+    if all(check.ok for check in checks):
+        try:
+            auth = preflight_github_token()
+        except AuthError as exc:
+            checks.append(ValidationCheck("auth", False, str(exc)))
+        else:
+            checks.append(ValidationCheck("auth", True, f"using {auth.source}"))
+    return checks
+
+
+def _local_task_paths(spec: PierJobSpec) -> list[Path]:
+    paths: list[Path] = []
+    for item in [*spec.config.tasks, *spec.config.datasets]:
+        path = getattr(item, "path", None)
+        if path is not None:
+            paths.append(Path(path))
+    return paths
+
+
+def _print_job_config_table(root: Path, specs: list[PierJobSpec]) -> None:
+    table = Table(title="Pier job configs", show_edge=False)
+    table.add_column("job")
+    table.add_column("config")
+    table.add_column("tasks", justify="right")
+    table.add_column("agents", justify="right")
+    for spec in specs:
+        table.add_row(
+            spec.name,
+            str(spec.path.relative_to(root)) if spec.path.is_relative_to(root) else str(spec.path),
+            str(len(spec.config.tasks) + len(spec.config.datasets)),
+            str(len(spec.config.agents)),
+        )
+    console.print(table)
+
+
+def _print_validation_checks(checks: list[ValidationCheck]) -> None:
+    table = Table(title="Validation")
+    table.add_column("")
+    table.add_column("check")
+    table.add_column("detail", style="dim")
+    for check in checks:
+        mark = "[green]✓[/green]" if check.ok else "[red]✗[/red]"
+        table.add_row(mark, check.name, check.detail)
+    console.print(table)
+
+
+def _resolve_or_exit(
+    root: Path | None,
+    selector: str | None,
+    *,
+    last: bool,
+    file_hint: bool = False,
+) -> ResolvedRun:
     root = Path(root or Path.cwd())
     layout = Layout(root)
     resolved = _resolve_run(layout, last=last, selector=selector)
     if resolved is None:
-        _print_run_not_found(selector, file_hint=True)
+        _print_run_not_found(selector, file_hint=file_hint)
         raise typer.Exit(1)
-    if resolved.kind == "pier":
-        source_path, label, source_kind, discovered_otel = resolve_pier_trial_analysis_source(
-            resolved.path, trial
-        )
-        if source_path is None:
-            err.print(f"[red]No Copilot session log or trajectory found in[/red] {resolved.path}")
-            diagnostic = describe_missing_pier_analysis_source(resolved.path, trial)
-            if diagnostic:
-                err.print(f"[yellow]{diagnostic}[/yellow]")
-            raise typer.Exit(1)
-        selected_otel = otel_file or discovered_otel
-        analysis = (
-            analyze_events(
-                load_events(source_path),
-                load_events(selected_otel) if selected_otel is not None else None,
-            )
-            if source_kind == "events"
-            else analyze_trajectory(read_json(source_path))
-        )
-        render_session_analysis(analysis, console, title=label, max_turns=max_turns)
-        return
-    run_dir = resolved.path
-
-    events_path, label, discovered_otel = _resolve_trial_events(run_dir, variant, task, trial)
-    if events_path is None:
-        err.print(f"[red]No trial session log found in[/red] {run_dir}")
-        raise typer.Exit(1)
-
-    selected_otel = otel_file or discovered_otel
-    render_session_analysis(
-        analyze_events(
-            load_events(events_path),
-            load_events(selected_otel) if selected_otel is not None else None,
-        ),
-        console,
-        title=label,
-        max_turns=max_turns,
-    )
-
-
-@app.command()
-def reindex(
-    root: Path | None = typer.Option(None, "--root", help="Experiment repository root."),
-) -> None:
-    """Rebuild ``results/index.db`` by scanning the filesystem."""
-    root = Path(root or Path.cwd())
-    layout = Layout(root)
-    count = index_reindex(layout)
-    console.print(f"[green]Reindexed {count} run(s)[/green] -> {layout.index_db}")
-
-
-# --------------------------------------------------------------------------- #
-# Helpers
-# --------------------------------------------------------------------------- #
-def _resolve_trial_events(
-    run_dir: Path, variant: str | None, task: str | None, trial: int | None
-) -> tuple[Path | None, str, Path | None]:
-    """Locate a trial's ``events.jsonl``, defaulting to the first variant/task/trial."""
-    variants_dir = run_dir / "variants"
-    if variant is not None:
-        vdir = variants_dir / variant
-    else:
-        subdirs = (
-            sorted(p for p in variants_dir.iterdir() if p.is_dir()) if variants_dir.is_dir() else []
-        )
-        if not subdirs:
-            return None, run_dir.name, None
-        vdir = subdirs[0]
-
-    tasks_dir = vdir / "tasks"
-    if task is not None:
-        tkdir = tasks_dir / task
-    else:
-        subdirs = sorted(p for p in tasks_dir.iterdir() if p.is_dir()) if tasks_dir.is_dir() else []
-        if not subdirs:
-            return None, f"{run_dir.name} · {vdir.name}", None
-        tkdir = subdirs[0]
-
-    trials_dir = tkdir / "trials"
-    if trial is not None:
-        tdir = trials_dir / f"{trial:03d}"
-    else:
-        subdirs = (
-            sorted(p for p in trials_dir.iterdir() if p.is_dir()) if trials_dir.is_dir() else []
-        )
-        if not subdirs:
-            return None, f"{run_dir.name} · {vdir.name}/{tkdir.name}", None
-        tdir = subdirs[0]
-
-    label = f"{run_dir.name} · {vdir.name}/{tkdir.name}/{tdir.name}"
-    events_path = tdir / "events.jsonl"
-    otel_path = tdir / "copilot-otel.jsonl"
-    return (
-        events_path if events_path.exists() else None,
-        label,
-        otel_path if otel_path.exists() else None,
-    )
+    return resolved
 
 
 def _resolve_run(layout: Layout, *, last: bool, selector: str | None) -> ResolvedRun | None:
     if last:
-        return _latest_resolved_run(layout)
+        latest = layout.latest_pier_job()
+        return ResolvedRun(latest, pier_job_label(latest)) if latest else None
     if selector is None:
         return None
-
-    legacy = layout.find_run(selector)
-    pier = layout.find_pier_job(selector)
-    if pier is not None and (legacy is None or "/" in selector):
-        return ResolvedRun("pier", pier, pier_job_label(pier))
-    if legacy is not None:
-        return ResolvedRun("legacy", legacy, legacy.name)
-    if pier is not None:
-        return ResolvedRun("pier", pier, pier_job_label(pier))
-    return None
-
-
-def _latest_resolved_run(layout: Layout) -> ResolvedRun | None:
-    candidates: list[tuple[str, str, ResolvedRun]] = []
-    for _experiment_slug, run_id, run_dir in layout.iter_runs():
-        candidates.append(
-            (_legacy_run_started_at(run_dir), run_id, ResolvedRun("legacy", run_dir, run_id))
-        )
-    for job_dir in layout.iter_pier_jobs():
-        selector = pier_job_label(job_dir)
-        candidates.append(
-            (_pier_run_started_at(job_dir), selector, ResolvedRun("pier", job_dir, selector))
-        )
-    if not candidates:
-        return None
-    return max(candidates, key=lambda candidate: (candidate[0], candidate[1]))[2]
-
-
-def _legacy_run_started_at(run_dir: Path) -> str:
-    summary_path = run_dir / "summary.json"
-    run_path = run_dir / "run.json"
-    if summary_path.exists():
-        return str(read_json(summary_path).get("started_at") or "")
-    if run_path.exists():
-        return str(read_json(run_path).get("started_at") or "")
-    return ""
-
-
-def _pier_run_started_at(job_dir: Path) -> str:
-    result_path = job_dir / "result.json"
-    if result_path.exists():
-        return str(read_json(result_path).get("started_at") or "")
-    return ""
+    run = layout.find_pier_job(selector)
+    return ResolvedRun(run, pier_job_label(run)) if run else None
 
 
 def _print_run_not_found(selector: str | None, *, file_hint: bool = False) -> None:
     if selector:
-        err.print(f"[red]Run not found:[/red] {selector!r}")
+        err.print(f"[red]Pier run not found:[/red] {selector!r}")
     else:
-        err.print("[red]Run not found.[/red] Pass a run selector or --last.")
+        err.print("[red]Pier run not found.[/red] Pass a run selector or --last.")
     hints = [
         "Use `copilot-experiments list` to copy a selector.",
-        "Pier selectors look like `job-name/run-id`; `job-name` selects that job's latest run.",
+        "Selectors look like `job-name/run-id`; `job-name` selects that job's latest run.",
     ]
     if file_hint:
         hints.append("Use `--file path/to/events.jsonl` to analyze a session log directly.")
     err.print("[dim]" + " ".join(hints) + "[/dim]")
 
 
-def _print_dry_run_report(report: DryRunReport) -> None:
-    table = Table(title=f"Dry-run · {report.experiment}", show_lines=False)
-    table.add_column("", justify="center", width=3)
-    table.add_column("check")
-    table.add_column("detail", style="dim")
-    for c in report.checks:
-        mark = "[green]✓[/green]" if c.ok else "[red]✗[/red]"
-        table.add_row(mark, c.name, c.detail)
-    console.print(table)
-    tail = "[dim]— nothing persisted (temp dir removed)[/dim]\n"
-    if report.ok:
-        console.print(f"[green]plumbing OK[/green] {tail}")
-    else:
-        console.print(f"[red]plumbing FAILED[/red] {tail}")
-
-
-def _make_progress() -> Callable[[str], None]:
-    """Return a progress sink for ``run --verbose``.
-
-    Each line is printed dimmed. ``markup=False`` keeps Copilot's raw output and the
-    ``[variant/NNN]`` phase tags from being interpreted as Rich markup.
-    """
-
-    def _emit(msg: str) -> None:
-        console.print(msg, style="dim", markup=False, highlight=False)
-
-    return _emit
-
-
-def _make_copilot_stream() -> Callable[[str], None]:
-    """Return a live Copilot-output sink for ``run --verbose``.
-
-    Copilot's ``--output-format json`` stream is a firehose of JSON events; a stateful
-    :class:`~copilot_experiments.render.LiveEventFormatter` condenses each into a short,
-    ASCII-tagged line (turns, messages, tool calls). Unparseable lines fall back to raw
-    text; pure-noise events are dropped. Output is indented under the phase messages.
-    """
-    from .render import LiveEventFormatter
-
-    formatter = LiveEventFormatter()
-
-    def _emit(line: str) -> None:
-        rendered = formatter.format(line)
-        if rendered is not None:
-            console.print(f"    {rendered}", style="dim", markup=False, highlight=False)
-
-    return _emit
-
-
-def _warn_failed_trials(layout: Layout, experiment: Experiment, run: ExperimentRun) -> None:
-    """Loudly flag trials that did not run cleanly, with a pointer to diagnose.
-
-    The summary table still renders a row for a Copilot invocation that errored out
-    immediately (e.g. bad auth or a bad working directory) -- just with zero turns.
-    That makes a broken run look deceptively clean. We surface harness/infra failures
-    explicitly, classify them (harness vs copilot), and point at the exact artifact to
-    inspect (its ``stdout.txt``).
-    """
-    problems: list[str] = []
-    for vr in run.variants:
-        for tr in vr.tasks:
-            for trial in tr.trials:
-                if not trial.failed:
-                    continue
-                trial_dir = layout.trial_dir(
-                    experiment.slug, run.run_id, vr.variant.slug, tr.task_slug, trial.trial_no
-                )
-                label = (
-                    "harness failure" if trial.status == "harness_error" else "copilot did not run"
-                )
-                detail = trial.error or trial.status
-                artifact = trial.error_artifact or "stdout.txt"
-                problems.append(
-                    f"  {vr.variant.slug}/{tr.task_slug}/{trial.trial_no:03d}: "
-                    f"{label} — {detail}\n"
-                    f"      -> {trial_dir / artifact}"
-                )
-    if not problems:
-        return
-    err.print(
-        f"[yellow]Warning:[/yellow] run status [bold]{run.status}[/bold] — "
-        f"{len(problems)} trial(s) failed in the harness (not the experiment). "
-        "Inspect the captured output:"
-    )
-    for line in problems:
-        err.print(f"[yellow]{line}[/yellow]")
-
-
-def _warn_failed_pier_trials(job_dir: Path) -> None:
-    """Point Pier harness failures at the trial result artifact."""
-
-    problems: list[str] = []
-    for trial in iter_pier_trial_summaries(job_dir):
-        if trial.get("status") == "ok":
+def _matching_trial_rows(
+    job_dir: Path,
+    *,
+    agent: str | None = None,
+    task: str | None = None,
+    trial: str | None = None,
+) -> list[dict]:
+    rows = iter_pier_trial_summaries(job_dir)
+    filtered = []
+    for index, row in enumerate(rows, start=1):
+        if agent and not _matches_agent(row, agent):
             continue
-        trial_name = str(trial.get("trial_name") or trial.get("trial_no") or "-")
-        problems.append(
-            f"  {trial_name}: harness failure — {trial.get('error') or trial.get('status')}\n"
-            f"      -> {job_dir / trial_name / 'result.json'}"
-        )
-    if not problems:
-        return
-    err.print(
-        f"[yellow]Warning:[/yellow] Pier job [bold]{pier_job_label(job_dir)}[/bold] had "
-        f"{len(problems)} harness failure(s). Inspect the captured trial result:"
-    )
-    for line in problems:
-        err.print(f"[yellow]{line}[/yellow]")
+        if task and task not in {row.get("task"), row.get("task_name")}:
+            continue
+        if trial and not _matches_trial(
+            row,
+            trial,
+            overall_index=index,
+            filtered=bool(agent or task),
+        ):
+            continue
+        filtered.append(row)
+    return filtered
 
 
-def _inspect_pier_job(job_dir: Path) -> None:
-    summary = write_pier_summary(job_dir)
-    console.print(f"[bold]Pier job[/bold]: {pier_job_label(job_dir)}")
-    console.print(f"[bold]summary[/bold]: {job_dir / 'summary.json'}")
-    _print_run_summary(summary)
+def _matches_agent(row: dict, selector: str) -> bool:
+    candidates = {str(row.get("agent") or ""), str(row.get("agent_name") or "")}
+    return selector in candidates or any(candidate.startswith(selector) for candidate in candidates)
 
-    table = Table(title=f"Trials in {pier_job_label(job_dir)}")
+
+def _matches_trial(row: dict, selector: str, *, overall_index: int, filtered: bool) -> bool:
+    if selector.isdigit():
+        number = int(selector)
+        if filtered:
+            return row.get("trial_no") == number
+        return overall_index == number
+    return selector in {str(row.get("trial_dir") or ""), str(row.get("trial_name") or "")}
+
+
+def _print_trials_table(rows: list[dict], *, title: str) -> None:
+    table = Table(title=title)
     table.add_column("trial")
+    table.add_column("agent")
+    table.add_column("task")
+    table.add_column("attempt", justify="right")
     table.add_column("status")
     table.add_column("success")
     table.add_column("analysis")
-    for trial_dir in sorted(
-        path for path in job_dir.iterdir() if path.is_dir() and (path / "result.json").exists()
-    ):
-        result = read_json(trial_dir / "result.json")
-        exception = result.get("exception_info")
-        rewards = (result.get("verifier_result") or {}).get("rewards") or {}
-        success = "-"
-        if rewards:
-            success = "yes" if any(float(value) > 0 for value in rewards.values()) else "no"
-        source_path, _label, source_kind, _otel_path = resolve_pier_trial_analysis_source(
-            job_dir, trial_dir.name
-        )
+    for row in rows:
         table.add_row(
-            trial_dir.name,
-            "harness_error" if exception else "ok",
-            success,
-            source_kind or ("yes" if source_path else "no"),
+            str(row.get("trial_dir") or row.get("trial_name") or "-"),
+            str(row.get("agent") or "-"),
+            str(row.get("task") or "-"),
+            str(row.get("trial_no") or "-"),
+            str(row.get("status") or "-"),
+            _yes_no(row.get("success")),
+            "yes" if row.get("metrics") else "-",
+        )
+    console.print(table)
+
+
+def _print_trial_filter_hint() -> None:
+    err.print(
+        "[dim]Use `copilot-experiments inspect <job/run>` to see agents, tasks, "
+        "and trial names.[/dim]"
+    )
+
+
+def _warn_failed_pier_trials(job_dir: Path) -> None:
+    failed = [row for row in iter_pier_trial_summaries(job_dir) if row.get("status") != "ok"]
+    if not failed:
+        return
+    table = Table(title="Failed Pier trials")
+    table.add_column("trial")
+    table.add_column("agent")
+    table.add_column("task")
+    table.add_column("status")
+    table.add_column("error")
+    for row in failed:
+        table.add_row(
+            str(row.get("trial_name") or "-"),
+            str(row.get("agent") or "-"),
+            str(row.get("task") or "-"),
+            str(row.get("status") or "-"),
+            str(row.get("error") or "-"),
         )
     console.print(table)
 
 
 def _print_run_summary(summary: dict) -> None:
-    sr = summary.get("overall_success_rate")
-    n_tasks = summary.get("n_tasks", 1)
-    multitask = n_tasks > 1
-    title = (
-        f"{summary['experiment']}  ·  {summary['run_id']}  ·  "
-        f"{n_tasks} task(s) · {summary['n_trials']} trial(s)  ·  "
-        f"success {'-' if sr is None else f'{sr * 100:.0f}%'}"
+    console.print(
+        f"[bold]{summary['job']}[/bold] · run [cyan]{summary['run_id']}[/cyan] · "
+        f"status={summary.get('status', '-')}"
     )
-    table = Table(title=title)
-    table.add_column("variant")
+    console.print(
+        f"agents={summary['n_agents']} tasks={summary.get('n_tasks', 0)} "
+        f"trials={summary['n_trials']} success={_pct(summary.get('overall_success_rate'))}"
+    )
+    multitask = summary.get("n_tasks", 0) > 1
+    table = Table(title="Agents")
+    table.add_column("agent")
     table.add_column("model")
     table.add_column("effort")
-    table.add_column("byok")
     if multitask:
         table.add_column("tasks", justify="right")
     table.add_column("trials", justify="right")
@@ -996,46 +703,43 @@ def _print_run_summary(summary: dict) -> None:
     table.add_column("tokens", justify="right")
     table.add_column("AIU", justify="right")
     table.add_column("AIU/solve", justify="right")
-    for v in summary["variants"]:
-        vsr = v.get("success_rate")
-        ms = v.get("mean_resolved_rate")
-        rk = v.get("resolved_at_k_rate")
+    for agent in summary["agents"]:
         row = [
-            v["name"],
-            v.get("model") or "-",
-            v.get("reasoning_effort") or "-",
-            "yes" if v.get("byok") else "no",
+            agent["name"],
+            agent.get("model") or "-",
+            agent.get("reasoning_effort") or "-",
         ]
         if multitask:
-            row.append(str(v.get("n_tasks", "-")))
-        row.append(str(v["n_trials"]))
-        row.append("-" if vsr is None else f"{vsr * 100:.0f}%")
+            row.append(str(agent.get("n_tasks", "-")))
+        row.append(str(agent["n_trials"]))
+        row.append(_pct(agent.get("success_rate")))
         if multitask:
-            row.append("-" if ms is None else f"{ms * 100:.0f}%")
-            row.append("-" if rk is None else f"{rk * 100:.0f}%")
+            row.append(_pct(agent.get("mean_resolved_rate")))
+            row.append(_pct(agent.get("resolved_at_k_rate")))
         row += [
-            _num(v.get("avg_duration_s")),
-            _num(v.get("avg_turns")),
-            _num(v.get("avg_tool_calls")),
-            _num(v.get("avg_tool_failures")),
-            _num(v.get("avg_total_tokens")),
-            _aiu(v.get("avg_aiu")),
-            _aiu(v.get("aiu_per_solve")),
+            _num(agent.get("avg_duration_s")),
+            _num(agent.get("avg_turns")),
+            _num(agent.get("avg_tool_calls")),
+            _num(agent.get("avg_tool_failures")),
+            _num(agent.get("avg_total_tokens")),
+            _aiu(agent.get("avg_aiu")),
+            _aiu(agent.get("aiu_per_solve")),
         ]
         table.add_row(*row)
+    console.print(table)
     total_aiu = summary.get("total_aiu")
     if total_aiu is not None:
-        console.print(table)
         console.print(f"[dim]total cost:[/dim] {_aiu(total_aiu)} AIU")
-        return
-    console.print(table)
 
 
-def _aiu(value: object) -> str:
+def _yes_no(value: object) -> str:
     if value is None:
         return "-"
-    val = float(value)
-    return f"{val:.3f}" if val < 1 else f"{val:,.2f}"
+    return "yes" if value else "no"
+
+
+def _pct(value: float | None) -> str:
+    return "-" if value is None else f"{value * 100:.0f}%"
 
 
 def _num(value: object) -> str:
@@ -1046,5 +750,11 @@ def _num(value: object) -> str:
     return str(value)
 
 
-if __name__ == "__main__":
+def _aiu(value: object) -> str:
+    if value is None:
+        return "-"
+    return f"{float(value):.3f}" if float(value) < 1 else f"{float(value):,.2f}"
+
+
+if __name__ == "__main__":  # pragma: no cover
     app()

@@ -15,8 +15,8 @@ That mixed stable identity and concrete execution identity in one string. It als
 lookup unclear: users could pass `--last`, but it was not obvious how to discover a run id, how to
 select an earlier run, or whether a suffixed directory was a new job or a rerun of the same job.
 
-The filesystem remains the source of truth, and `results/index.db` remains a derived cache. Existing
-flat Pier job directories must remain readable during migration.
+The filesystem remains the source of truth. Earlier plans kept `results/index.db` as a derived cache
+and retained flat Pier job directories during migration; ADR-0020 supersedes that compatibility path.
 
 ## Decision
 
@@ -34,7 +34,7 @@ The CLI will expose copyable selectors through `copilot-experiments list`:
 - `job-name` selects the latest run for that Pier job.
 - `--last` selects the most recent stored run overall.
 
-Legacy flat Pier jobs at `jobs/<job-name>/` remain discoverable and resumable.
+Only nested Pier jobs with `copilot-experiments-run.json` are discoverable and resumable.
 
 ## Consequences
 
@@ -47,5 +47,5 @@ The harness owns a small manifest file in each new Pier run directory because Pi
 mistaking legacy flat job trial directories for nested runs; nested child directories under a legacy
 flat job are treated as runs only when they contain the harness manifest.
 
-Older flat jobs remain supported, but new documentation and generated experiment repos should teach
-the nested layout and `list`-driven selector workflow.
+Older flat jobs are not supported after the Pier-only cleanup. Documentation and generated
+experiment repos teach the nested layout and `list`-driven selector workflow.
