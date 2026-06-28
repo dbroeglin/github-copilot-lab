@@ -10,9 +10,10 @@ description: >-
 
 ## Filesystem layout
 ```
-jobs/<job-name>/
+jobs/<job-name>/<run-id>/
   config.json         # resolved Pier job config
   result.json         # Pier job result
+  copilot-experiments-run.json
   summary.json        # derived copilot-experiments summary
   summary.md          # human-readable report
   <trial-name>/
@@ -31,7 +32,8 @@ tokens, and AIU economics.
 ```bash
 copilot-experiments list                 # runs + success rates
 copilot-experiments show --last          # per-variant comparison table
-copilot-experiments inspect <job-name>   # list Pier trials
+copilot-experiments inspect <job-name>   # latest run for that Pier job
+copilot-experiments inspect <job-name>/<run-id>  # exact run selector from list
 copilot-experiments analyze --last       # render native Copilot events
 copilot-experiments reindex              # rebuild results/index.db
 ```

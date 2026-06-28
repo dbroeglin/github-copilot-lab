@@ -26,8 +26,14 @@ This page covers the second one and the `analyze` command that renders it.
 # Most recent Pier job (first trial by default)
 uv run copilot-experiments analyze --last
 
-# A specific Pier job / trial
+# Discover copyable selectors
+uv run copilot-experiments list
+
+# A specific Pier job's latest run / trial
 uv run copilot-experiments analyze tracer-bullet-textstats --trial 1
+
+# A specific Pier run / trial
+uv run copilot-experiments analyze tracer-bullet-textstats/20260620-153000 --trial 1
 
 # Any events.jsonl on disk — a stored trial log, or a live session under
 # ~/.copilot/session-state/<id>/events.jsonl

@@ -12,7 +12,9 @@ from copilot_experiments.index import connect, index_pier_job_dir
 from copilot_experiments.pier_results import (
     build_pier_summary,
     describe_missing_pier_analysis_source,
+    pier_job_identity,
     resolve_pier_trial_events,
+    write_pier_run_manifest,
     write_pier_summary,
 )
 
@@ -216,6 +218,23 @@ def test_build_pier_summary_reads_native_copilot_events(tmp_path: Path):
     assert variant["tasks"][0]["task"] == "textstats"
 
 
+def test_build_pier_summary_reads_nested_run_identity(tmp_path: Path):
+    job_dir = _make_pier_job(tmp_path / "jobs" / "demo-job" / "20260620-153000")
+    write_pier_run_manifest(job_dir, job_name="demo-job", run_id="20260620-153000")
+
+    summary = build_pier_summary(job_dir)
+
+    assert summary["experiment"] == "demo-job"
+    assert summary["experiment_slug"] == "demo-job"
+    assert summary["run_id"] == "20260620-153000"
+    assert summary["pier_job_id"] == "demo-job/20260620-153000"
+    assert pier_job_identity(job_dir) == {
+        "job_name": "demo-job",
+        "run_id": "20260620-153000",
+        "id": "demo-job/20260620-153000",
+    }
+
+
 def test_resolve_pier_trial_events(tmp_path: Path):
     job_dir = _make_pier_job(tmp_path / "jobs" / "demo-job")
 
@@ -294,8 +313,52 @@ def test_cli_analyze_reports_pier_harness_error_when_logs_are_absent(tmp_path: P
     assert "unavailable" in result.output
 
 
+def test_cli_list_displays_pier_run_selectors(tmp_path: Path):
+    job_dir = _make_pier_job(tmp_path / "jobs" / "demo-job" / "20260620-153000")
+    write_pier_run_manifest(job_dir, job_name="demo-job", run_id="20260620-153000")
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["list", "--root", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    assert "Pier runs" in result.output
+    assert "selector" in result.output
+    assert "demo-job/20260620-153000" in result.output
+    assert "demo-job" in result.output
+    assert "20260620-153000" in result.output
+    assert "No runs yet" not in result.output
+
+
+def test_cli_show_accepts_pier_job_run_selector(tmp_path: Path):
+    job_dir = _make_pier_job(tmp_path / "jobs" / "demo-job" / "20260620-153000")
+    write_pier_run_manifest(job_dir, job_name="demo-job", run_id="20260620-153000")
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        ["show", "demo-job/20260620-153000", "--root", str(tmp_path)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "demo-job" in result.output
+    assert "20260620-153000" in result.output
+    assert "summary.md" in result.output
+
+
+def test_cli_show_missing_run_points_to_list(tmp_path: Path):
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["show", "missing", "--root", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "Run not found" in result.output
+    assert "copilot-experiments list" in result.output
+    assert "job-name/run-id" in result.output
+
+
 def test_write_pier_summary_and_index(tmp_path: Path):
-    job_dir = _make_pier_job(tmp_path / "jobs" / "demo-job")
+    job_dir = _make_pier_job(tmp_path / "jobs" / "demo-job" / "20260620-153000")
+    write_pier_run_manifest(job_dir, job_name="demo-job", run_id="20260620-153000")
 
     summary = write_pier_summary(job_dir)
 
@@ -306,12 +369,18 @@ def test_write_pier_summary_and_index(tmp_path: Path):
     conn = connect(tmp_path / "results" / "index.db")
     try:
         index_pier_job_dir(conn, job_dir)
-        job = conn.execute("SELECT * FROM pier_jobs WHERE job_name='demo-job'").fetchone()
-        trial = conn.execute("SELECT * FROM pier_trials WHERE job_name='demo-job'").fetchone()
+        job = conn.execute("SELECT * FROM pier_jobs WHERE id='demo-job/20260620-153000'").fetchone()
+        trial = conn.execute(
+            "SELECT * FROM pier_trials WHERE job_id='demo-job/20260620-153000'"
+        ).fetchone()
     finally:
         conn.close()
 
+    assert job["job_name"] == "demo-job"
+    assert job["run_id"] == "20260620-153000"
     assert job["success_rate"] == 1.0
+    assert trial["job_name"] == "demo-job"
+    assert trial["run_id"] == "20260620-153000"
     assert trial["trial_name"] == "copilot-cli__textstats__1"
     assert trial["success"] == 1
     assert trial["total_tokens"] == 15.0

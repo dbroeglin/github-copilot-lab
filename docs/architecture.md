@@ -19,7 +19,7 @@ flowchart TD
     AGENT --> ATIF["/logs/agent/trajectory.json"]
     OTEL --> ATIF
     JOB --> VERIFY["Pier verifier\ntests/test.sh -> reward.txt/json"]
-    JOB --> OUT["jobs/<job>/<trial>/"]
+    JOB --> OUT["jobs/<job>/<run-id>/<trial>/"]
     EVENTS --> ANALYSIS["sessionlog.py + analysis.py"]
     OTEL --> ANALYSIS
     ATIF --> FALLBACK["ATIF fallback metrics"]
@@ -75,7 +75,7 @@ During normalization, `name: copilot-cli` becomes
 
 ## Design invariants
 
-1. **Pier jobs are canonical.** `jobs/<job>/` is the primary source of truth for new runs.
+1. **Pier jobs are canonical.** `jobs/<job>/<run-id>/` is the primary source of truth for new runs.
 2. **SQLite is derived.** `results/index.db` can be rebuilt from `jobs/` and legacy `results/`.
 3. **Copilot logs are primary for Copilot metrics.** ATIF is a fallback and cross-agent view.
 4. **Copilot CLI is not reimplemented.** The installed agent shells out to the real CLI.

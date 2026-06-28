@@ -61,6 +61,7 @@ Validate and run it like any other Pier experiment:
 ```bash
 uv run copilot-experiments run --dry-run
 uv run copilot-experiments run deepswe-smoke
+uv run copilot-experiments list
 uv run copilot-experiments show --last
 uv run copilot-experiments analyze --last --trial 1
 ```

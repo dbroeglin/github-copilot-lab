@@ -139,6 +139,7 @@ The generated config uses `datasets:` for a corpus and `tasks:` for a single tas
 ```bash
 uv run copilot-experiments run --dry-run
 uv run copilot-experiments run
+uv run copilot-experiments list
 uv run copilot-experiments show --last
 uv run copilot-experiments analyze --last --trial 1
 ```
@@ -152,6 +153,7 @@ export COPILOT_EXPERIMENTS_REPO=/path/to/github-copilot-lab
 
 uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments run --dry-run
 uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments run
+uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments list
 uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments show --last
 uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments analyze --last --trial 1
 ```
@@ -171,8 +173,13 @@ common WSL/Docker Desktop integration issues before a trial can fail without Cop
 
 Pier itself resumes existing matching job directories and skips trials that already have
 `result.json`. `copilot-experiments run` treats a plain rerun as a fresh measurement instead: when
-`jobs/<job_name>/` already exists, it appends a timestamp to the Pier job name for the new run. Pass
-`--resume` to opt into Pier's native resume behavior for interrupted jobs.
+the configured `job_name` is used as a stable grouping directory and each execution gets a
+timestamped run id under `jobs/<job_name>/<run-id>/`. Pass `--resume` to reuse the latest existing
+run directory for that job and opt into Pier's native skip-completed-trials behavior.
+
+After a run, `copilot-experiments list` prints copyable selectors. Use `job-name/run-id` to inspect
+or analyze an exact Pier execution, `job-name` for that job's latest run, or `--last` for the most
+recent stored run across all jobs.
 
 ## Legacy Python experiments
 

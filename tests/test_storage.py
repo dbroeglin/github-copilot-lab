@@ -50,16 +50,32 @@ def test_iter_runs_skips_incomplete(tmp_path: Path):
 
 def test_pier_job_helpers(tmp_path: Path):
     jobs = tmp_path / "jobs"
-    good = jobs / "20260102T000000Z_beta"
+    good = jobs / "smoke" / "20260102-000000"
     good.mkdir(parents=True)
     (good / "config.json").write_text("{}", encoding="utf-8")
     (good / "result.json").write_text("{}", encoding="utf-8")
-    incomplete = jobs / "20260103T000000Z_incomplete"
+    latest = jobs / "smoke" / "20260103-000000"
+    latest.mkdir()
+    (latest / "config.json").write_text("{}", encoding="utf-8")
+    (latest / "result.json").write_text("{}", encoding="utf-8")
+    incomplete = jobs / "smoke" / "20260104-000000"
     incomplete.mkdir()
+    legacy = jobs / "legacy-job"
+    legacy.mkdir()
+    (legacy / "config.json").write_text("{}", encoding="utf-8")
+    (legacy / "result.json").write_text("{}", encoding="utf-8")
+    legacy_trial = legacy / "copilot-cli__task__1"
+    legacy_trial.mkdir()
+    (legacy_trial / "config.json").write_text("{}", encoding="utf-8")
+    (legacy_trial / "result.json").write_text("{}", encoding="utf-8")
 
     layout = Layout(tmp_path)
 
-    assert layout.iter_pier_jobs() == [good]
-    assert layout.latest_pier_job() == good
+    assert layout.iter_pier_jobs() == [legacy, good, latest]
+    assert layout.pier_job_key(good) == "smoke/20260102-000000"
+    assert layout.latest_pier_job() == latest
+    assert layout.find_pier_job("smoke") == latest
+    assert layout.find_pier_job("smoke/20260102") == good
     assert layout.find_pier_job("20260102") == good
+    assert layout.find_pier_job("legacy-job") == legacy
     assert layout.find_pier_job("missing") is None

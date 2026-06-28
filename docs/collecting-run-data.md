@@ -3,7 +3,7 @@
 This page is the field guide for collecting the most complete record of what happened during a
 GitHub Copilot CLI session. The primary artifact is Copilot's native per-session JSONL event
 stream, `events.jsonl`. In the current Pier-first harness, that log is captured inside each Pier
-trial under `jobs/<job>/<trial>/agent/copilot-session/<session-id>/events.jsonl`.
+trial under `jobs/<job>/<run-id>/<trial>/agent/copilot-session/<session-id>/events.jsonl`.
 
 OpenTelemetry (OTel) export is a complementary live-observability path. ATIF
 `trajectory.json` is a cross-agent compatibility artifact and fallback, not a replacement for
@@ -80,25 +80,27 @@ After Pier downloads trial logs, the canonical experiment-repo layout is:
 ```text
 jobs/
   <job-name>/
-    config.json
-    result.json
-    summary.json          # derived by copilot-experiments
-    summary.md            # derived by copilot-experiments
-    <trial-name>/
+    <run-id>/
       config.json
       result.json
-      agent/
-        copilot-cli.jsonl
-        copilot-cli.txt
-        trajectory.json
-        copilot-otel.jsonl
-        copilot-session/
-          <session-id>/
-            events.jsonl
-      verifier/
-        reward.txt
-        reward.json
-      artifacts/
+      copilot-experiments-run.json
+      summary.json          # derived by copilot-experiments
+      summary.md            # derived by copilot-experiments
+      <trial-name>/
+        config.json
+        result.json
+        agent/
+          copilot-cli.jsonl
+          copilot-cli.txt
+          trajectory.json
+          copilot-otel.jsonl
+          copilot-session/
+            <session-id>/
+              events.jsonl
+        verifier/
+          reward.txt
+          reward.json
+        artifacts/
 ```
 
 `show`, `analyze`, `inspect`, and `reindex` read this tree. For Copilot trials they prefer native

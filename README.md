@@ -15,7 +15,7 @@ flowchart LR
     J --> P["Pier backend\nsandbox + verifier + artifacts"]
     P --> A["copilot-cli installed agent\nreal copilot binary"]
     A --> S["native Copilot\ncopilot-session/**/events.jsonl"]
-    P --> O["jobs/<job>/\nPier result.json + trials"]
+    P --> O["jobs/<job>/<run-id>/\nPier result.json + trials"]
     S --> C["Copilot-native analysis\nAIU, tokens, tools, turns"]
     O --> R["summary.json / summary.md\nshow / inspect / analyze"]
     O --> I["results/index.db\nderived SQLite index"]
@@ -46,6 +46,7 @@ uv run copilot-experiments run --dry-run
 
 # run for real through Pier
 uv run copilot-experiments run
+uv run copilot-experiments list
 uv run copilot-experiments show --last
 uv run copilot-experiments analyze --last
 ```
@@ -60,6 +61,7 @@ export COPILOT_EXPERIMENTS_REPO=/path/to/github-copilot-lab
 uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments init my-experiments
 cd my-experiments
 uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments run --dry-run
+uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments list
 uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments show --last
 ```
 
@@ -74,10 +76,14 @@ login`) and a Pier-supported execution backend such as Docker. `run` preflights 
 backend before creating a job; for Docker this checks the CLI, Compose plugin, and daemon
 connection so missing WSL integration fails before an empty Pier job is recorded.
 
-Each `run` is a new measurement. If the configured Pier `job_name` already exists under `jobs/`,
-`copilot-experiments` writes the rerun to a timestamped job name instead of silently reusing the
-completed job. Pass `--resume` only when you intentionally want Pier's native resume behavior for an
-interrupted job.
+Each `run` is a new measurement. The configured Pier `job_name` remains the stable experiment
+identity, while each execution gets a timestamped run directory under
+`jobs/<job_name>/<run-id>/`. Pass `--resume` only when you intentionally want to reuse the latest
+run directory for that job and let Pier skip already-completed trials.
+
+Use `copilot-experiments list` after a run to copy the selector for a concrete execution. Pier
+selectors use `job-name/run-id`; passing just `job-name` selects that job's latest run, while
+`--last` selects the most recent stored run overall.
 
 ## Bundled examples
 
@@ -96,13 +102,13 @@ uv run copilot-experiments analyze --root examples/tracer_bullet --last
 | --- | --- |
 | `init <dir>` | Scaffold a standalone Pier experiment repository. |
 | `deepswe-import <path>` | Generate a Pier job config for a cloned DeepSWE checkout, `tasks/` corpus, or single task. |
-| `run [name]` | Discover Pier job configs in `experiments/` and run them. Reruns create a fresh timestamped Pier job when the configured name already exists. Falls back to legacy Python experiments when no Pier configs exist. |
+| `run [name]` | Discover Pier job configs in `experiments/` and run them. Each run writes to a fresh `jobs/<job>/<run-id>/` directory. Falls back to legacy Python experiments when no Pier configs exist. |
 | `run --dry-run` | Validate Pier job configs, or run the legacy ephemeral mock dry-run for legacy experiments. |
 | `run --resume` | Resume an existing Pier job directory and skip already-completed matching trials. |
-| `list` | List Pier job configs, legacy experiments, and stored jobs/runs. |
-| `show <job>` / `show --last` | Print a summary for a Pier job or legacy run. |
-| `analyze <job>` / `analyze --last` / `analyze --file <events.jsonl>` | Render a rich overview of a native Copilot session log. |
-| `inspect <job>` | Drill into stored trials and status. |
+| `list` | List Pier job configs, legacy experiments, and copyable run selectors. |
+| `show <selector>` / `show --last` | Print a summary for a Pier run (`job` or `job/run`) or legacy run id. |
+| `analyze <selector>` / `analyze --last` / `analyze --file <events.jsonl>` | Render a rich overview of a native Copilot session log. |
+| `inspect <selector>` | Drill into stored trials and status for a Pier run (`job` or `job/run`) or legacy run id. |
 | `reindex` | Rebuild the derived SQLite index from `jobs/` and legacy `results/`. |
 
 ## Documentation

@@ -11,7 +11,7 @@ import sqlite3
 from pathlib import Path
 
 from ._util import read_json
-from .pier_results import build_pier_summary, iter_pier_trial_summaries
+from .pier_results import build_pier_summary, iter_pier_trial_summaries, pier_job_identity
 from .storage import Layout
 
 SCHEMA = """
@@ -85,7 +85,9 @@ CREATE TABLE IF NOT EXISTS trials (
     error           TEXT
 );
 CREATE TABLE IF NOT EXISTS pier_jobs (
-    job_name       TEXT PRIMARY KEY,
+    id             TEXT PRIMARY KEY,
+    job_name       TEXT,
+    run_id         TEXT,
     job_dir        TEXT,
     started_at     TEXT,
     finished_at    TEXT,
@@ -95,7 +97,9 @@ CREATE TABLE IF NOT EXISTS pier_jobs (
 );
 CREATE TABLE IF NOT EXISTS pier_trials (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id         TEXT,
     job_name       TEXT,
+    run_id         TEXT,
     variant_slug   TEXT,
     task_slug      TEXT,
     trial_name     TEXT,
@@ -123,6 +127,18 @@ def _migrate(conn: sqlite3.Connection) -> None:
     for column, ddl in _TRIAL_MIGRATIONS.items():
         if column not in existing:
             conn.execute(ddl)
+
+    pier_job_columns = {row["name"] for row in conn.execute("PRAGMA table_info(pier_jobs)")}
+    pier_trial_columns = {row["name"] for row in conn.execute("PRAGMA table_info(pier_trials)")}
+    if (
+        pier_job_columns
+        and {"id", "run_id"} - pier_job_columns
+        or pier_trial_columns
+        and {"job_id", "run_id"} - pier_trial_columns
+    ):
+        conn.execute("DROP TABLE IF EXISTS pier_trials")
+        conn.execute("DROP TABLE IF EXISTS pier_jobs")
+        conn.executescript(SCHEMA)
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -256,15 +272,20 @@ def index_pier_job_dir(conn: sqlite3.Connection, job_dir: Path) -> None:
     """Insert (or replace) one Pier job into the derived index."""
 
     summary = build_pier_summary(job_dir)
-    job_name = job_dir.name
-    conn.execute("DELETE FROM pier_jobs WHERE job_name=?", (job_name,))
-    conn.execute("DELETE FROM pier_trials WHERE job_name=?", (job_name,))
+    identity = pier_job_identity(job_dir)
+    job_id = identity["id"]
+    job_name = identity["job_name"]
+    run_id = identity["run_id"]
+    conn.execute("DELETE FROM pier_jobs WHERE id=?", (job_id,))
+    conn.execute("DELETE FROM pier_trials WHERE job_id=?", (job_id,))
 
     conn.execute(
-        "INSERT INTO pier_jobs(job_name, job_dir, started_at, finished_at, n_trials, "
-        "success_rate, status) VALUES (?,?,?,?,?,?,?)",
+        "INSERT INTO pier_jobs(id, job_name, run_id, job_dir, started_at, finished_at, "
+        "n_trials, success_rate, status) VALUES (?,?,?,?,?,?,?,?,?)",
         (
+            job_id,
             job_name,
+            run_id,
             str(job_dir),
             summary.get("started_at"),
             summary.get("finished_at"),
@@ -277,11 +298,13 @@ def index_pier_job_dir(conn: sqlite3.Connection, job_dir: Path) -> None:
     for trial in iter_pier_trial_summaries(job_dir):
         metrics = trial.get("metrics") or {}
         conn.execute(
-            "INSERT INTO pier_trials(job_name, variant_slug, task_slug, trial_name, "
-            "success, status, n_turns, n_tool_calls, total_tokens, aiu, model, error) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO pier_trials(job_id, job_name, run_id, variant_slug, task_slug, "
+            "trial_name, success, status, n_turns, n_tool_calls, total_tokens, aiu, model, "
+            "error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
+                job_id,
                 job_name,
+                run_id,
                 trial.get("variant"),
                 trial.get("task"),
                 trial.get("trial_name"),

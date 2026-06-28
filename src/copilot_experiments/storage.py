@@ -8,18 +8,19 @@ Pier layout (inside an experiment repository)::
 
     jobs/
       <job-name>/
-        config.json
-        result.json
-        <trial-name>/
+        <run-id>/
           config.json
           result.json
-          agent/
-            trajectory.json
-            copilot-cli.jsonl
-            copilot-otel.jsonl
-            copilot-session/**/events.jsonl
-          verifier/
-          artifacts/
+          <trial-name>/
+            config.json
+            result.json
+            agent/
+              trajectory.json
+              copilot-cli.jsonl
+              copilot-otel.jsonl
+              copilot-session/**/events.jsonl
+            verifier/
+            artifacts/
 
 Legacy layout (inside an experiment repository)::
 
@@ -54,6 +55,8 @@ Legacy layout (inside an experiment repository)::
 from __future__ import annotations
 
 from pathlib import Path
+
+from .pier_results import PIER_RUN_MANIFEST
 
 
 class Layout:
@@ -139,30 +142,68 @@ class Layout:
 
     # --- Pier discovery helpers ------------------------------------------- #
     def iter_pier_jobs(self) -> list[Path]:
-        """Yield Pier job directories under ``jobs/``.
+        """Yield Pier run directories under ``jobs/``.
 
-        A Pier job directory is identified by the stable pair ``config.json`` and
-        ``result.json``. The SQLite index remains under ``results/`` because it is
-        a derived cache owned by this project, not by Pier.
+        New runs live at ``jobs/<job-name>/<run-id>/``. Pre-migration flat
+        ``jobs/<job-name>/`` directories are still recognized for existing data.
+        A Pier run directory is identified by the stable pair ``config.json`` and
+        ``result.json``. The SQLite index remains under ``results/`` because it
+        is a derived cache owned by this project, not by Pier.
         """
 
         if not self.jobs_dir.exists():
             return []
-        return sorted(
-            path
-            for path in self.jobs_dir.iterdir()
-            if path.is_dir() and (path / "config.json").exists() and (path / "result.json").exists()
-        )
+        found: list[Path] = []
+        for path in sorted(p for p in self.jobs_dir.iterdir() if p.is_dir()):
+            is_flat_job = self._is_pier_job_dir(path)
+            if is_flat_job:
+                found.append(path)
+            found.extend(
+                child
+                for child in sorted(p for p in path.iterdir() if p.is_dir())
+                if self._is_pier_job_dir(child)
+                and (not is_flat_job or (child / PIER_RUN_MANIFEST).exists())
+            )
+        return sorted(found, key=self._pier_job_sort_key)
 
     def find_pier_job(self, job_name: str) -> Path | None:
-        """Locate a Pier job by exact name or unique prefix."""
+        """Locate a Pier run by job name, run id, ``job/run`` id, or unique prefix."""
 
-        matches = [path for path in self.iter_pier_jobs() if path.name == job_name]
-        if matches:
+        jobs = self.iter_pier_jobs()
+        group = self.jobs_dir / job_name
+        group_runs = [path for path in jobs if path.parent == group]
+        if group_runs:
+            return group_runs[-1]
+
+        matches = [
+            path for path in jobs if path.name == job_name or self.pier_job_key(path) == job_name
+        ]
+        if len(matches) == 1:
             return matches[0]
-        prefix = [path for path in self.iter_pier_jobs() if path.name.startswith(job_name)]
+        prefix = [
+            path
+            for path in jobs
+            if path.name.startswith(job_name) or self.pier_job_key(path).startswith(job_name)
+        ]
         return prefix[0] if len(prefix) == 1 else None
 
     def latest_pier_job(self) -> Path | None:
         jobs = self.iter_pier_jobs()
         return jobs[-1] if jobs else None
+
+    def pier_job_key(self, job_dir: Path) -> str:
+        """Return ``job/run`` for nested runs and the directory name for legacy flat jobs."""
+
+        job_dir = Path(job_dir)
+        if job_dir.parent.parent == self.jobs_dir:
+            return f"{job_dir.parent.name}/{job_dir.name}"
+        return job_dir.name
+
+    @staticmethod
+    def _is_pier_job_dir(path: Path) -> bool:
+        return (path / "config.json").exists() and (path / "result.json").exists()
+
+    def _pier_job_sort_key(self, path: Path) -> tuple[int, str, str]:
+        if path.parent.parent == self.jobs_dir:
+            return (1, path.name, path.parent.name)
+        return (0, path.name, path.name)

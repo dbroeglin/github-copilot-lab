@@ -11,36 +11,40 @@ For a source-by-source explanation of what can be captured around a Copilot CLI 
 ```
 jobs/
   <job-name>/
-    config.json
-    result.json
-    summary.json          # written by copilot-experiments
-    summary.md            # written by copilot-experiments
-    <trial-name>/
+    <run-id>/
       config.json
       result.json
-      agent/
-        copilot-cli.jsonl
-        copilot-cli.txt
-        trajectory.json
-        copilot-otel.jsonl   # Copilot OTel file export, when no custom OTLP destination overrides it
-        copilot-session/
-          <session-id>/
-            events.jsonl
-      verifier/
-        reward.txt
-        reward.json
-      artifacts/
+      copilot-experiments-run.json
+      summary.json          # written by copilot-experiments
+      summary.md            # written by copilot-experiments
+      <trial-name>/
+        config.json
+        result.json
+        agent/
+          copilot-cli.jsonl
+          copilot-cli.txt
+          trajectory.json
+          copilot-otel.jsonl   # Copilot OTel file export, when no custom OTLP destination overrides it
+          copilot-session/
+            <session-id>/
+              events.jsonl
+        verifier/
+          reward.txt
+          reward.json
+        artifacts/
 ```
 
 Pier owns `config.json`, `result.json`, trial directories, logs, verifier outputs, and artifact
-download. `copilot-experiments` derives summaries and indexes from that tree.
+download. `copilot-experiments` adds `copilot-experiments-run.json` to preserve the stable
+`job_name` plus concrete `run_id`, then derives summaries and indexes from that tree.
 
 ## Key files
 
 | File | Meaning |
 | --- | --- |
-| `jobs/<job>/result.json` | Pier job-level status and stats. |
-| `jobs/<job>/<trial>/result.json` | Pier trial status, agent info, verifier result, exceptions, timings. |
+| `jobs/<job>/<run-id>/result.json` | Pier job-level status and stats for one execution. |
+| `jobs/<job>/<run-id>/copilot-experiments-run.json` | Stable job name and concrete run id used by summaries, lookup, and indexing. |
+| `jobs/<job>/<run-id>/<trial>/result.json` | Pier trial status, agent info, verifier result, exceptions, timings. |
 | `agent/trajectory.json` | ATIF trajectory emitted by the installed agent. Copilot agent steps include OTel per-LLM-call metrics when `copilot-otel.jsonl` is available; the file is also used as a fallback for non-Copilot agents. |
 | `agent/copilot-cli.jsonl` / `.txt` | Raw Copilot CLI output streams. Useful for auth or CLI failures. |
 | `agent/copilot-session/**/events.jsonl` | Native Copilot session log. Primary source for Copilot turns, tool calls, tokens, AIU, and analysis. |
@@ -72,9 +76,10 @@ their `results/<experiment>/<run>/.../trials/<NNN>/` layout.
 New Pier tables:
 
 ```sql
-pier_jobs(job_name PK, job_dir, started_at, finished_at, n_trials, success_rate, status)
-pier_trials(id PK, job_name, variant_slug, task_slug, trial_name, success, status,
-            n_turns, n_tool_calls, total_tokens, aiu, model, error)
+pier_jobs(id PK, job_name, run_id, job_dir, started_at, finished_at, n_trials,
+          success_rate, status)
+pier_trials(id PK, job_id, job_name, run_id, variant_slug, task_slug, trial_name,
+            success, status, n_turns, n_tool_calls, total_tokens, aiu, model, error)
 ```
 
 Legacy tables (`experiments`, `runs`, `variants`, `tasks`, `trials`) remain for old Python runs.
@@ -82,10 +87,16 @@ Legacy tables (`experiments`, `runs`, `variants`, `tasks`, `trials`) remain for 
 ## Analyzing a trial
 
 ```bash
+uv run copilot-experiments list
 uv run copilot-experiments analyze --last --trial 1
 uv run copilot-experiments analyze <job-name> --trial 1
-uv run copilot-experiments analyze --file jobs/<job>/<trial>/agent/copilot-session/.../events.jsonl
+uv run copilot-experiments analyze <job-name>/<run-id> --trial 1
+uv run copilot-experiments analyze --file jobs/<job>/<run-id>/<trial>/agent/copilot-session/.../events.jsonl
 ```
+
+`list` is the discovery command for run ids. For Pier outputs, its `selector (job/run)` column is
+the exact string accepted by `show`, `inspect`, and `analyze`. Passing only `<job-name>` selects
+that job's latest run; passing `<job-name>/<run-id>` selects one concrete execution.
 
 If the selected Pier trial has no native Copilot `events.jsonl`, `analyze` falls back to
 `agent/trajectory.json` when present; otherwise it reports that no Copilot session log or

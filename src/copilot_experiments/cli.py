@@ -5,7 +5,9 @@ from __future__ import annotations
 import importlib.util
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import typer
 from rich.console import Console
@@ -29,7 +31,9 @@ from .pier_backend import (
 from .pier_results import (
     describe_missing_pier_analysis_source,
     iter_pier_trial_summaries,
+    pier_job_label,
     resolve_pier_trial_analysis_source,
+    write_pier_run_manifest,
     write_pier_summary,
 )
 from .render import render_session_analysis
@@ -65,6 +69,13 @@ app = typer.Typer(
 )
 console = Console()
 err = Console(stderr=True)
+
+
+@dataclass(frozen=True)
+class ResolvedRun:
+    kind: Literal["legacy", "pier"]
+    path: Path
+    selector: str
 
 
 # --------------------------------------------------------------------------- #
@@ -318,12 +329,13 @@ def run(
             if verbose:
                 prepared.config.debug = True
             inject_copilot_token(prepared.config, auth.token)
-            console.print(f"[bold]Running Pier job[/bold] {prepared.run_name}")
-            if prepared.renamed:
+            console.print(f"[bold]Running Pier job[/bold] {prepared.label}")
+            if prepared.resumed:
+                console.print(f"[dim]resume:[/dim] reusing existing Pier run {prepared.label}")
+            else:
                 console.print(
-                    f"[dim]existing job[/dim] {prepared.requested_name} "
-                    f"[dim]found; writing fresh rerun to[/dim] {prepared.run_name} "
-                    "[dim](use --resume to reuse the existing job)[/dim]"
+                    f"[dim]run:[/dim] writing fresh run to "
+                    f"{Path(prepared.config.jobs_dir) / prepared.run_name}"
                 )
             try:
                 run_result = run_pier_job(prepared.config)
@@ -331,6 +343,11 @@ def run(
                 err.print(f"[red]Pier job failed:[/red] {type(exc).__name__}: {exc}")
                 any_failures = True
                 continue
+            write_pier_run_manifest(
+                run_result.job_dir,
+                job_name=prepared.requested_name,
+                run_id=prepared.run_name,
+            )
             summary = write_pier_summary(run_result.job_dir)
             _print_run_summary(summary)
             _warn_failed_pier_trials(run_result.job_dir)
@@ -407,7 +424,7 @@ def run(
 def list_cmd(
     root: Path | None = typer.Option(None, "--root", help="Experiment repository root."),
 ) -> None:
-    """List experiments and past runs."""
+    """List experiment definitions and concrete run selectors."""
     root = Path(root or Path.cwd())
     layout = Layout(root)
     pier_specs = discover_pier_job_configs(root)
@@ -437,11 +454,10 @@ def list_cmd(
         console.print(table)
 
     runs = index_list_runs(layout)
-    if not runs:
-        console.print("[dim]No runs yet.[/dim]")
-    else:
-        table = Table(title="Runs")
-        table.add_column("run id")
+    pier_jobs = layout.iter_pier_jobs()
+    if runs:
+        table = Table(title="Experiment runs")
+        table.add_column("selector")
         table.add_column("experiment")
         table.add_column("started")
         table.add_column("trials", justify="right")
@@ -457,20 +473,24 @@ def list_cmd(
             )
         console.print(table)
 
-    pier_jobs = layout.iter_pier_jobs()
     if not pier_jobs:
+        if not runs:
+            console.print("[dim]No runs yet.[/dim]")
         return
-    table = Table(title="Runs")
-    table.add_column("pier job")
+    table = Table(title="Pier runs")
+    table.add_column("selector (job/run)", no_wrap=True)
     table.add_column("started")
     table.add_column("trials", justify="right")
+    table.add_column("success", justify="right")
     table.add_column("status")
     for job_dir in pier_jobs:
         summary = write_pier_summary(job_dir)
+        sr = summary.get("overall_success_rate")
         table.add_row(
-            job_dir.name,
+            str(summary.get("pier_job_id") or pier_job_label(job_dir)),
             (summary.get("started_at") or "")[:19],
             str(summary.get("n_trials") or 0),
+            "-" if sr is None else f"{sr * 100:.0f}%",
             str(summary.get("status") or "-"),
         )
     console.print(table)
@@ -478,58 +498,59 @@ def list_cmd(
 
 @app.command()
 def show(
-    run_id: str | None = typer.Argument(None, help="Run id or unique prefix."),
-    last: bool = typer.Option(False, "--last", help="Show the most recent run."),
+    selector: str | None = typer.Argument(
+        None,
+        help=(
+            "Run selector from `list`: run id/prefix for legacy runs, Pier job for that "
+            "job's latest run, or Pier job/run id."
+        ),
+    ),
+    last: bool = typer.Option(False, "--last", help="Show the most recent stored run."),
     root: Path | None = typer.Option(None, "--root", help="Experiment repository root."),
 ) -> None:
     """Print a run summary and per-variant comparison."""
     root = Path(root or Path.cwd())
     layout = Layout(root)
-    pier_job = _resolve_pier_job(layout, last=last, run_id=run_id)
-    run_dir = (
-        None
-        if last and pier_job is not None
-        else (layout.latest_run() if last else (layout.find_run(run_id) if run_id else None))
-    )
-    if run_dir is None:
-        if pier_job is not None:
-            summary = write_pier_summary(pier_job)
-            _print_run_summary(summary)
-            console.print(f"\n[dim]{pier_job / 'summary.md'}[/dim]")
-            return
-    if run_dir is None:
-        err.print("[red]Run not found.[/red] Pass a run id or --last.")
+    resolved = _resolve_run(layout, last=last, selector=selector)
+    if resolved is None:
+        _print_run_not_found(selector)
         raise typer.Exit(1)
-    _print_run_summary(read_json(run_dir / "summary.json"))
-    console.print(f"\n[dim]{run_dir / 'summary.md'}[/dim]")
+    if resolved.kind == "pier":
+        summary = write_pier_summary(resolved.path)
+        _print_run_summary(summary)
+        console.print(f"\n[dim]{resolved.path / 'summary.md'}[/dim]")
+        return
+    _print_run_summary(read_json(resolved.path / "summary.json"))
+    console.print(f"\n[dim]{resolved.path / 'summary.md'}[/dim]")
 
 
 @app.command()
 def inspect(
-    run_id: str | None = typer.Argument(None, help="Run id or unique prefix."),
+    selector: str | None = typer.Argument(
+        None,
+        help=(
+            "Run selector from `list`: run id/prefix for legacy runs, Pier job for that "
+            "job's latest run, or Pier job/run id."
+        ),
+    ),
     variant: str | None = typer.Option(None, "--variant", help="Variant slug."),
     task: str | None = typer.Option(None, "--task", help="Task slug."),
     trial: int | None = typer.Option(None, "--trial", help="Trial number."),
     events: int = typer.Option(20, "--events", help="Number of session events to show."),
-    last: bool = typer.Option(False, "--last", help="Inspect the most recent run."),
+    last: bool = typer.Option(False, "--last", help="Inspect the most recent stored run."),
     root: Path | None = typer.Option(None, "--root", help="Experiment repository root."),
 ) -> None:
     """Drill into a run's variants, tasks, trials, and session events."""
     root = Path(root or Path.cwd())
     layout = Layout(root)
-    pier_job = _resolve_pier_job(layout, last=last, run_id=run_id)
-    run_dir = (
-        None
-        if last and pier_job is not None
-        else (layout.latest_run() if last else (layout.find_run(run_id) if run_id else None))
-    )
-    if run_dir is None:
-        if pier_job is not None:
-            _inspect_pier_job(pier_job)
-            return
-    if run_dir is None:
-        err.print("[red]Run not found.[/red] Pass a run id or --last.")
+    resolved = _resolve_run(layout, last=last, selector=selector)
+    if resolved is None:
+        _print_run_not_found(selector)
         raise typer.Exit(1)
+    if resolved.kind == "pier":
+        _inspect_pier_job(resolved.path)
+        return
+    run_dir = resolved.path
 
     variants_dir = run_dir / "variants"
     if variant is None:
@@ -604,7 +625,13 @@ def inspect(
 
 @app.command()
 def analyze(
-    run_id: str | None = typer.Argument(None, help="Run id or unique prefix."),
+    selector: str | None = typer.Argument(
+        None,
+        help=(
+            "Run selector from `list`: run id/prefix for legacy runs, Pier job for that "
+            "job's latest run, or Pier job/run id."
+        ),
+    ),
     variant: str | None = typer.Option(None, "--variant", help="Variant slug (default: first)."),
     task: str | None = typer.Option(None, "--task", help="Task slug (default: first)."),
     trial: int | None = typer.Option(None, "--trial", help="Trial number (default: first)."),
@@ -614,7 +641,7 @@ def analyze(
     otel_file: Path | None = typer.Option(
         None, "--otel-file", help="Optional Copilot OTel JSONL file to enrich analysis."
     ),
-    last: bool = typer.Option(False, "--last", help="Analyze the most recent run."),
+    last: bool = typer.Option(False, "--last", help="Analyze the most recent stored run."),
     max_turns: int = typer.Option(0, "--max-turns", help="Limit timeline rows (0 = all)."),
     root: Path | None = typer.Option(None, "--root", help="Experiment repository root."),
 ) -> None:
@@ -632,37 +659,32 @@ def analyze(
 
     root = Path(root or Path.cwd())
     layout = Layout(root)
-    pier_job = _resolve_pier_job(layout, last=last, run_id=run_id)
-    run_dir = (
-        None
-        if last and pier_job is not None
-        else (layout.latest_run() if last else (layout.find_run(run_id) if run_id else None))
-    )
-    if run_dir is None:
-        if pier_job is not None:
-            source_path, label, source_kind, discovered_otel = resolve_pier_trial_analysis_source(
-                pier_job, trial
-            )
-            if source_path is None:
-                err.print(f"[red]No Copilot session log or trajectory found in[/red] {pier_job}")
-                diagnostic = describe_missing_pier_analysis_source(pier_job, trial)
-                if diagnostic:
-                    err.print(f"[yellow]{diagnostic}[/yellow]")
-                raise typer.Exit(1)
-            selected_otel = otel_file or discovered_otel
-            analysis = (
-                analyze_events(
-                    load_events(source_path),
-                    load_events(selected_otel) if selected_otel is not None else None,
-                )
-                if source_kind == "events"
-                else analyze_trajectory(read_json(source_path))
-            )
-            render_session_analysis(analysis, console, title=label, max_turns=max_turns)
-            return
-    if run_dir is None:
-        err.print("[red]Run not found.[/red] Pass a run id, --last, or --file.")
+    resolved = _resolve_run(layout, last=last, selector=selector)
+    if resolved is None:
+        _print_run_not_found(selector, file_hint=True)
         raise typer.Exit(1)
+    if resolved.kind == "pier":
+        source_path, label, source_kind, discovered_otel = resolve_pier_trial_analysis_source(
+            resolved.path, trial
+        )
+        if source_path is None:
+            err.print(f"[red]No Copilot session log or trajectory found in[/red] {resolved.path}")
+            diagnostic = describe_missing_pier_analysis_source(resolved.path, trial)
+            if diagnostic:
+                err.print(f"[yellow]{diagnostic}[/yellow]")
+            raise typer.Exit(1)
+        selected_otel = otel_file or discovered_otel
+        analysis = (
+            analyze_events(
+                load_events(source_path),
+                load_events(selected_otel) if selected_otel is not None else None,
+            )
+            if source_kind == "events"
+            else analyze_trajectory(read_json(source_path))
+        )
+        render_session_analysis(analysis, console, title=label, max_turns=max_turns)
+        return
+    run_dir = resolved.path
 
     events_path, label, discovered_otel = _resolve_trial_events(run_dir, variant, task, trial)
     if events_path is None:
@@ -740,12 +762,68 @@ def _resolve_trial_events(
     )
 
 
-def _resolve_pier_job(layout: Layout, *, last: bool, run_id: str | None) -> Path | None:
+def _resolve_run(layout: Layout, *, last: bool, selector: str | None) -> ResolvedRun | None:
     if last:
-        return layout.latest_pier_job()
-    if run_id:
-        return layout.find_pier_job(run_id)
+        return _latest_resolved_run(layout)
+    if selector is None:
+        return None
+
+    legacy = layout.find_run(selector)
+    pier = layout.find_pier_job(selector)
+    if pier is not None and (legacy is None or "/" in selector):
+        return ResolvedRun("pier", pier, pier_job_label(pier))
+    if legacy is not None:
+        return ResolvedRun("legacy", legacy, legacy.name)
+    if pier is not None:
+        return ResolvedRun("pier", pier, pier_job_label(pier))
     return None
+
+
+def _latest_resolved_run(layout: Layout) -> ResolvedRun | None:
+    candidates: list[tuple[str, str, ResolvedRun]] = []
+    for _experiment_slug, run_id, run_dir in layout.iter_runs():
+        candidates.append(
+            (_legacy_run_started_at(run_dir), run_id, ResolvedRun("legacy", run_dir, run_id))
+        )
+    for job_dir in layout.iter_pier_jobs():
+        selector = pier_job_label(job_dir)
+        candidates.append(
+            (_pier_run_started_at(job_dir), selector, ResolvedRun("pier", job_dir, selector))
+        )
+    if not candidates:
+        return None
+    return max(candidates, key=lambda candidate: (candidate[0], candidate[1]))[2]
+
+
+def _legacy_run_started_at(run_dir: Path) -> str:
+    summary_path = run_dir / "summary.json"
+    run_path = run_dir / "run.json"
+    if summary_path.exists():
+        return str(read_json(summary_path).get("started_at") or "")
+    if run_path.exists():
+        return str(read_json(run_path).get("started_at") or "")
+    return ""
+
+
+def _pier_run_started_at(job_dir: Path) -> str:
+    result_path = job_dir / "result.json"
+    if result_path.exists():
+        return str(read_json(result_path).get("started_at") or "")
+    return ""
+
+
+def _print_run_not_found(selector: str | None, *, file_hint: bool = False) -> None:
+    if selector:
+        err.print(f"[red]Run not found:[/red] {selector!r}")
+    else:
+        err.print("[red]Run not found.[/red] Pass a run selector or --last.")
+    hints = [
+        "Use `copilot-experiments list` to copy a selector.",
+        "Pier selectors look like `job-name/run-id`; `job-name` selects that job's latest run.",
+    ]
+    if file_hint:
+        hints.append("Use `--file path/to/events.jsonl` to analyze a session log directly.")
+    err.print("[dim]" + " ".join(hints) + "[/dim]")
 
 
 def _print_dry_run_report(report: DryRunReport) -> None:
@@ -851,7 +929,7 @@ def _warn_failed_pier_trials(job_dir: Path) -> None:
     if not problems:
         return
     err.print(
-        f"[yellow]Warning:[/yellow] Pier job [bold]{job_dir.name}[/bold] had "
+        f"[yellow]Warning:[/yellow] Pier job [bold]{pier_job_label(job_dir)}[/bold] had "
         f"{len(problems)} harness failure(s). Inspect the captured trial result:"
     )
     for line in problems:
@@ -860,11 +938,11 @@ def _warn_failed_pier_trials(job_dir: Path) -> None:
 
 def _inspect_pier_job(job_dir: Path) -> None:
     summary = write_pier_summary(job_dir)
-    console.print(f"[bold]Pier job[/bold]: {job_dir.name}")
+    console.print(f"[bold]Pier job[/bold]: {pier_job_label(job_dir)}")
     console.print(f"[bold]summary[/bold]: {job_dir / 'summary.json'}")
     _print_run_summary(summary)
 
-    table = Table(title=f"Trials in {job_dir.name}")
+    table = Table(title=f"Trials in {pier_job_label(job_dir)}")
     table.add_column("trial")
     table.add_column("status")
     table.add_column("success")

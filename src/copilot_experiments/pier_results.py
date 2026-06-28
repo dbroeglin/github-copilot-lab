@@ -14,6 +14,7 @@ from .report import summary_markdown
 from .sessionlog import load_events, parse_metrics
 
 AnalysisSource = Literal["events", "trajectory"]
+PIER_RUN_MANIFEST = "copilot-experiments-run.json"
 
 
 def iter_trial_dirs(job_dir: Path) -> list[Path]:
@@ -39,6 +40,7 @@ def build_pier_summary(job_dir: Path) -> dict[str, Any]:
     job_dir = Path(job_dir)
     job_result = read_json(job_dir / "result.json")
     job_config = read_json(job_dir / "config.json") if (job_dir / "config.json").exists() else {}
+    identity = pier_job_identity(job_dir, job_config)
 
     variant_cells: dict[str, dict[str, Any]] = {}
     for row in iter_pier_trial_summaries(job_dir):
@@ -78,9 +80,10 @@ def build_pier_summary(job_dir: Path) -> dict[str, Any]:
     total_aiu = sum((trial.get("metrics") or {}).get("aiu") or 0 for trial in all_trials)
 
     summary = {
-        "run_id": job_dir.name,
-        "experiment": job_config.get("job_name") or job_dir.name,
-        "experiment_slug": job_dir.name,
+        "run_id": identity["run_id"],
+        "experiment": identity["job_name"],
+        "experiment_slug": identity["job_name"],
+        "pier_job_id": identity["id"],
         "started_at": job_result.get("started_at"),
         "finished_at": job_result.get("finished_at"),
         "status": _job_status(job_result),
@@ -110,14 +113,55 @@ def write_pier_summary(job_dir: Path) -> dict[str, Any]:
     return summary
 
 
+def write_pier_run_manifest(job_dir: Path, *, job_name: str, run_id: str) -> None:
+    """Persist the stable job identity beside Pier's run artifacts."""
+
+    write_json(
+        Path(job_dir) / PIER_RUN_MANIFEST,
+        {
+            "schema_version": 1,
+            "job_name": job_name,
+            "run_id": run_id,
+            "id": f"{job_name}/{run_id}",
+        },
+    )
+
+
+def pier_job_identity(job_dir: Path, job_config: dict[str, Any] | None = None) -> dict[str, str]:
+    """Return stable job identity and concrete run id for a Pier output directory."""
+
+    job_dir = Path(job_dir)
+    manifest_path = job_dir / PIER_RUN_MANIFEST
+    if manifest_path.exists():
+        manifest = read_json(manifest_path)
+        job_name = str(manifest.get("job_name") or job_dir.parent.name)
+        run_id = str(manifest.get("run_id") or job_dir.name)
+        return {"job_name": job_name, "run_id": run_id, "id": f"{job_name}/{run_id}"}
+
+    if job_dir.parent.parent.name == "jobs":
+        job_name = job_dir.parent.name
+        run_id = job_dir.name
+        return {"job_name": job_name, "run_id": run_id, "id": f"{job_name}/{run_id}"}
+
+    config = job_config or (
+        read_json(job_dir / "config.json") if (job_dir / "config.json").exists() else {}
+    )
+    job_name = str(config.get("job_name") or job_dir.name)
+    return {"job_name": job_name, "run_id": job_dir.name, "id": job_dir.name}
+
+
+def pier_job_label(job_dir: Path) -> str:
+    return pier_job_identity(job_dir)["id"]
+
+
 def resolve_pier_trial_events(
     job_dir: Path, trial: int | str | None = None
 ) -> tuple[Path | None, str]:
     trial_dir = _resolve_trial_dir(job_dir, trial)
     if trial_dir is None:
-        return None, Path(job_dir).name
+        return None, pier_job_label(job_dir)
     events = find_copilot_session_events(trial_dir / "agent")
-    return events, f"{Path(job_dir).name} · {trial_dir.name}"
+    return events, f"{pier_job_label(job_dir)} · {trial_dir.name}"
 
 
 def resolve_pier_trial_analysis_source(
@@ -125,9 +169,9 @@ def resolve_pier_trial_analysis_source(
 ) -> tuple[Path | None, str, AnalysisSource | None, Path | None]:
     trial_dir = _resolve_trial_dir(job_dir, trial)
     if trial_dir is None:
-        return None, Path(job_dir).name, None, None
+        return None, pier_job_label(job_dir), None, None
 
-    label = f"{Path(job_dir).name} · {trial_dir.name}"
+    label = f"{pier_job_label(job_dir)} · {trial_dir.name}"
     agent_dir = trial_dir / "agent"
     events = find_copilot_session_events(agent_dir)
     if events is not None:

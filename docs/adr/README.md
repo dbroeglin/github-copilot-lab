@@ -35,3 +35,4 @@ We follow the lightweight format popularized by
 | [0016](0016-use-deepswe-for-large-benchmark-protocols.md) | Use DeepSWE for large benchmark protocols | Accepted |
 | [0017](0017-import-deepswe-as-pier-dataset.md) | Import DeepSWE as a Pier dataset config | Accepted |
 | [0018](0018-adopt-pytest-cov-for-local-coverage-analysis.md) | Adopt pytest-cov for local coverage analysis | Accepted |
+| [0019](0019-use-nested-pier-run-directories.md) | Use nested Pier run directories | Accepted |
