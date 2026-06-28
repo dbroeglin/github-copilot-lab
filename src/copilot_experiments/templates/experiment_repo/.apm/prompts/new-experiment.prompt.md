@@ -11,6 +11,6 @@ Given a task description from the user:
    `instruction.md`, `environment/`, and `tests/test.sh`.
 2. Add `experiments/<slug>.yaml` defining a Pier `JobConfig` with the `copilot-cli` agent, model
    settings, attempts, and artifacts.
-3. Validate with `copilot-experiments run --dry-run` and fix any errors.
+3. Validate with `copilot-experiments validate` and fix any errors.
 
 Ask for the model matrix and number of attempts if not provided.

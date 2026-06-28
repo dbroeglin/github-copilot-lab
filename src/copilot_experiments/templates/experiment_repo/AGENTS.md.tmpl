@@ -9,21 +9,20 @@ This repository contains **GitHub Copilot research experiments** built with the
 - `tasks/<name>/` — Harbor/Pier task directories (`task.toml`, `instruction.md`, `environment/`,
   `tests/`).
 - `jobs/` — Pier job outputs. **Never edit by hand**; they are canonical run artifacts.
-- `results/` — derived SQLite index. Regenerate with `copilot-experiments reindex`.
 - `.apm/` — APM-managed agent context (instructions, skills, prompts).
 
 ## Authoring an experiment
 1. Add a deterministic Pier task under `tasks/<name>/`.
 2. Create `experiments/<name>.yaml` with a Pier `JobConfig` using `name: copilot-cli` for
    GitHub Copilot CLI runs.
-3. Validate config loading with `uv run copilot-experiments run --dry-run`.
+3. Validate config loading and environment preflights with `uv run copilot-experiments validate`.
 
 ## Conventions
 - Keep instructions and task environments deterministic and self-contained.
 - Verifier scripts should write `/logs/verifier/reward.txt` or `reward.json` and exit non-zero on
   failure.
 - Use `n_attempts > 1` when you need statistical robustness.
-- Do not commit `jobs/` or `results/` (they are gitignored).
+- Do not commit `jobs/` (it is gitignored).
 - Keep code ruff-formatted/linted and add focused tests for behavior changes.
 
 ## Commands
@@ -34,9 +33,10 @@ If you are using a local checkout of the unpublished harness, replace
 
 ```bash
 uv sync
-uv run copilot-experiments run [--dry-run]
+uv run copilot-experiments validate
+uv run copilot-experiments run
 uv run copilot-experiments list
 uv run copilot-experiments show --last
-uv run copilot-experiments inspect <job-name> --trial <n>
-uv run copilot-experiments analyze <job-name> --trial <n>
+uv run copilot-experiments inspect <job-name>/<run-id> --agent <agent> --trial <n>
+uv run copilot-experiments analyze <job-name>/<run-id> --agent <agent> --trial <n>
 ```

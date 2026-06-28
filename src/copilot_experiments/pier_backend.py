@@ -14,6 +14,7 @@ from typing import Any
 import yaml
 
 from .pier_agents.copilot_cli import COPILOT_CLI_AGENT_NAME, CopilotCli
+from .pier_results import PIER_RUN_MANIFEST
 
 COPILOT_CLI_AGENT_IMPORT_PATH = CopilotCli.import_path()
 
@@ -40,15 +41,20 @@ class PierRunResult:
 
 @dataclass(frozen=True)
 class PreparedPierJob:
-    """A Pier config ready to run, plus any job-name adjustment made for freshness."""
+    """A Pier config ready to run, plus the stable job and concrete run identity."""
 
     config: Any
     requested_name: str
     run_name: str
+    resumed: bool = False
 
     @property
     def renamed(self) -> bool:
         return self.requested_name != self.run_name
+
+    @property
+    def label(self) -> str:
+        return f"{self.requested_name}/{self.run_name}"
 
 
 class PierBackendPreflightError(RuntimeError):
@@ -157,28 +163,31 @@ def prepare_pier_job_for_run(
 ) -> PreparedPierJob:
     """Return a run-ready config.
 
-    Pier resumes an existing matching ``jobs/<job_name>`` directory and skips completed trials.
-    For an experiment harness, a plain ``run`` should create a new measurement instead, while
-    explicit ``--resume`` should preserve Pier's native behavior.
+    Pier treats ``jobs_dir / job_name`` as the job directory and resumes any completed
+    trials found there. The harness keeps the configured ``job_name`` as the stable
+    experiment identity, but points Pier at ``jobs/<job_name>/<run_id>`` so every
+    execution has a uniform run directory. Explicit ``--resume`` reuses the latest
+    known run for that stable job when one exists.
     """
 
     prepared = config.model_copy(deep=True)
     requested_name = str(prepared.job_name)
     if resume:
-        return PreparedPierJob(prepared, requested_name, requested_name)
+        existing = _latest_existing_run_dir(prepared)
+        if existing is not None:
+            prepared.jobs_dir = existing.parent
+            prepared.job_name = existing.name
+            return PreparedPierJob(prepared, requested_name, existing.name, resumed=True)
 
-    requested_dir = _job_dir(prepared)
-    if not requested_dir.exists():
-        return PreparedPierJob(prepared, requested_name, requested_name)
-
-    stamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
-    base = f"{requested_name}-{stamp}"
-    run_name = base
+    base_run_name = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
+    run_name = base_run_name
+    job_group_dir = Path(prepared.jobs_dir) / requested_name
     index = 2
-    while (Path(prepared.jobs_dir) / run_name).exists():
-        run_name = f"{base}-{index}"
+    while (job_group_dir / run_name).exists():
+        run_name = f"{base_run_name}-{index}"
         index += 1
 
+    prepared.jobs_dir = job_group_dir
     prepared.job_name = run_name
     return PreparedPierJob(prepared, requested_name, run_name)
 
@@ -203,6 +212,23 @@ def _resolve_path(path: Path, base: Path) -> Path:
 
 def _job_dir(config: Any) -> Path:
     return Path(config.jobs_dir) / str(config.job_name)
+
+
+def _latest_existing_run_dir(config: Any) -> Path | None:
+    """Return the latest resumable run directory for a stable job config."""
+
+    job_group = _job_dir(config)
+    if job_group.is_dir():
+        runs = sorted(
+            path
+            for path in job_group.iterdir()
+            if path.is_dir()
+            and (path / "config.json").exists()
+            and (path / PIER_RUN_MANIFEST).exists()
+        )
+        if runs:
+            return runs[-1]
+    return None
 
 
 def _environment_type(config: Any) -> str:

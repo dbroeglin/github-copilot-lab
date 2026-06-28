@@ -1,8 +1,8 @@
 # Architecture
 
-`copilot-experiments` is now a thin integration layer around Pier. Pier provides the execution
+`copilot-experiments` is a thin integration layer around Pier. Pier provides the execution
 substrate; this package contributes a GitHub Copilot CLI installed agent, Copilot-native session
-analysis, a small CLI, templates, and derived reporting/indexing.
+analysis, a small CLI, templates, and derived reporting.
 
 ## Pipeline
 
@@ -19,12 +19,11 @@ flowchart TD
     AGENT --> ATIF["/logs/agent/trajectory.json"]
     OTEL --> ATIF
     JOB --> VERIFY["Pier verifier\ntests/test.sh -> reward.txt/json"]
-    JOB --> OUT["jobs/<job>/<trial>/"]
+    JOB --> OUT["jobs/<job>/<run-id>/<trial>/"]
     EVENTS --> ANALYSIS["sessionlog.py + analysis.py"]
     OTEL --> ANALYSIS
     ATIF --> FALLBACK["ATIF fallback metrics"]
     OUT --> SUMMARY["pier_results.py\nsummary.json / summary.md"]
-    OUT --> INDEX["index.py\nresults/index.db"]
 ```
 
 ## Main modules
@@ -33,17 +32,15 @@ flowchart TD
 | --- | --- |
 | `pier_agents/copilot_cli.py` | Pier `BaseInstalledAgent` that installs and runs the real Copilot CLI, captures native session logs, and emits ATIF. |
 | `pier_backend.py` | Discovers and normalizes Pier `JobConfig` YAML/JSON, maps `name: copilot-cli` to the local import path, injects Copilot auth, and calls Pier's Python API. |
-| `pier_results.py` | Reads Pier job directories and adapts them into the existing summary/show/analyze shape. |
+| `pier_results.py` | Reads Pier job directories and derives job/run/agent/task/trial summaries. |
 | `sessionlog.py` | Parses native Copilot `events.jsonl` into flat metrics, including AIU/token economics. |
 | `analysis.py` / `render.py` | Builds and renders a richer session analysis view from native Copilot events. |
-| `storage.py` | Locates canonical Pier `jobs/` plus legacy `results/`. |
-| `index.py` | Rebuildable SQLite index over Pier jobs and legacy runs. |
+| `storage.py` | Locates canonical Pier `jobs/<job>/<run-id>/` directories. |
 | `scaffold.py` | Renders a Pier-first experiment repository template. |
-| `cli.py` | Typer CLI for init/run/list/show/inspect/analyze/reindex. |
+| `cli.py` | Typer CLI for init/deepswe-import/validate/run/list/show/inspect/analyze. |
 
-Legacy `Experiment`, `Task`, `Variant`, `runner.py`, `workspace.py`, and `invoker.py` remain as a
-compatibility path when an experiment repository has no Pier job configs. New work should use Pier
-tasks and jobs.
+Legacy native `Experiment`, `Task`, `Variant`, `runner.py`, `workspace.py`, `invoker.py`, and the
+SQLite index have been removed from active code paths. All execution goes through Pier jobs.
 
 ## Copilot CLI installed agent
 
@@ -75,9 +72,8 @@ During normalization, `name: copilot-cli` becomes
 
 ## Design invariants
 
-1. **Pier jobs are canonical.** `jobs/<job>/` is the primary source of truth for new runs.
-2. **SQLite is derived.** `results/index.db` can be rebuilt from `jobs/` and legacy `results/`.
-3. **Copilot logs are primary for Copilot metrics.** ATIF is a fallback and cross-agent view.
-4. **Copilot CLI is not reimplemented.** The installed agent shells out to the real CLI.
-5. **Tests stay offline.** Unit tests use config and job fixtures, not Docker or real Copilot.
-6. **Secrets stay out of persisted config.** Auth is injected at run time via environment.
+1. **Pier jobs are canonical.** `jobs/<job>/<run-id>/` is the primary source of truth for new runs.
+2. **Copilot logs are primary for Copilot metrics.** ATIF is a fallback and cross-agent view.
+3. **Copilot CLI is not reimplemented.** The installed agent shells out to the real CLI.
+4. **Tests stay offline.** Unit tests use config and job fixtures, not Docker or real Copilot.
+5. **Secrets stay out of persisted config.** Auth is injected at run time via environment.

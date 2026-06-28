@@ -1,4 +1,4 @@
-"""Tests for token-economics extraction, AIU pricing, aggregation, and rendering.
+"""Tests for token-economics extraction, AIU pricing, and rendering.
 
 Everything here is offline: synthetic ``session.shutdown`` / ``session.compaction_complete`` /
 ``session.truncation`` fixtures stand in for what the real Copilot CLI writes to ``events.jsonl``.
@@ -12,15 +12,7 @@ from rich.console import Console
 
 from copilot_experiments import pricing
 from copilot_experiments.analysis import analyze_events
-from copilot_experiments.models import (
-    Metrics,
-    TaskResult,
-    TrialResult,
-    Variant,
-    VariantResult,
-)
 from copilot_experiments.render import render_session_analysis
-from copilot_experiments.report import aggregate_variant, build_summary, summary_markdown
 from copilot_experiments.sessionlog import extract_economics, parse_metrics
 
 # Token counts chosen so the default rates price out to a round 1.215 AIU.
@@ -295,67 +287,6 @@ def test_analysis_keeps_shutdown_totals_when_otel_present():
     assert a.llm_calls[0].input_tokens == 999_999
     assert a.total_tokens == _INPUT + _CACHE_READ + _CACHE_WRITE + _OUTPUT
     assert a.economics.aiu == 1.215
-
-
-# --------------------------------------------------------------------------- #
-# report aggregation
-# --------------------------------------------------------------------------- #
-def _variant_result(aius: list[float], successes: list[bool | None]) -> VariantResult:
-    trials = [
-        TrialResult(
-            trial_no=i,
-            session_id=f"s{i}",
-            exit_code=0,
-            duration_s=1.0,
-            success=successes[i],
-            metrics=Metrics(
-                aiu=aius[i],
-                total_tokens=int(aius[i] * 1000),
-                lines_added=10,
-                cache_read_tokens=8000,
-            ),
-        )
-        for i in range(len(aius))
-    ]
-    task = TaskResult(task_slug="task-001", task_name=None, prompt="p", trials=trials)
-    return VariantResult(variant=Variant(name="v", model="claude-opus-4.8"), tasks=[task])
-
-
-def test_aggregate_variant_variance_and_cost():
-    vr = _variant_result([1.0, 3.0], [True, False])
-    agg = aggregate_variant(vr)
-    assert agg["avg_aiu"] == 2.0
-    assert agg["std_aiu"] == 1.414
-    assert agg["cv_aiu"] == 0.707
-    assert agg["total_aiu"] == 4.0
-    # One solved task out of two -> all spend attributed to that single success.
-    assert agg["aiu_per_solve"] == 4.0
-    assert agg["avg_cache_read_tokens"] == 8000
-
-
-def test_aggregate_variant_single_trial_zero_std():
-    vr = _variant_result([2.5], [True])
-    agg = aggregate_variant(vr)
-    assert agg["std_aiu"] == 0.0
-    assert agg["cv_aiu"] is None
-
-
-def test_summary_markdown_has_cost_section():
-    vr = _variant_result([1.0, 3.0], [True, True])
-
-    class _Run:
-        run_id = "r1"
-        experiment_name = "Econ"
-        experiment_slug = "econ"
-        started_at = "2026-01-01T00:00:00Z"
-        finished_at = "2026-01-01T00:10:00Z"
-        status = "completed"
-        variants = [vr]
-
-    md = summary_markdown(build_summary(_Run()))
-    assert "Cost & token economics" in md
-    assert "AIU / solve" in md
-    assert "Total cost:" in md
 
 
 # --------------------------------------------------------------------------- #

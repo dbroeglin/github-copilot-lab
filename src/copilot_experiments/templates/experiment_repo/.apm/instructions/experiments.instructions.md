@@ -8,7 +8,6 @@ applyTo: "**"
 - Experiments are Pier `JobConfig` YAML files in `experiments/*.yaml`.
 - Tasks live under `tasks/<name>/` as Harbor/Pier task directories.
 - Generated Pier job data lives under `jobs/` and must not be edited by hand.
-- Derived query data lives under `results/index.db` and can be rebuilt.
 
 When adding an experiment:
 1. Create a deterministic task directory under `tasks/`.
@@ -16,4 +15,4 @@ When adding an experiment:
 3. Define or update a Pier job YAML in `experiments/`.
 4. Use the local Copilot agent import path:
    `copilot_experiments.pier_agents.copilot_cli:CopilotCli`.
-5. Validate configs with `copilot-experiments run --dry-run` before a real run.
+5. Validate configs with `copilot-experiments validate` before a real run.

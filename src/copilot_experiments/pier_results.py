@@ -14,6 +14,7 @@ from .report import summary_markdown
 from .sessionlog import load_events, parse_metrics
 
 AnalysisSource = Literal["events", "trajectory"]
+PIER_RUN_MANIFEST = "copilot-experiments-run.json"
 
 
 def iter_trial_dirs(job_dir: Path) -> list[Path]:
@@ -34,23 +35,24 @@ def iter_pier_trial_summaries(job_dir: Path) -> list[dict[str, Any]]:
 
 
 def build_pier_summary(job_dir: Path) -> dict[str, Any]:
-    """Build the familiar summary shape from a Pier job directory."""
+    """Build an agent-oriented summary from a Pier job directory."""
 
     job_dir = Path(job_dir)
     job_result = read_json(job_dir / "result.json")
     job_config = read_json(job_dir / "config.json") if (job_dir / "config.json").exists() else {}
+    identity = pier_job_identity(job_dir, job_config)
 
-    variant_cells: dict[str, dict[str, Any]] = {}
+    agent_cells: dict[str, dict[str, Any]] = {}
     for row in iter_pier_trial_summaries(job_dir):
-        variant_key = row["variant"]
-        cell = variant_cells.setdefault(
-            variant_key,
+        agent_key = row["agent"]
+        cell = agent_cells.setdefault(
+            agent_key,
             {
-                "variant": variant_key,
-                "name": variant_key,
+                "agent": agent_key,
+                "name": agent_key,
+                "agent_name": row.get("agent_name"),
                 "model": row.get("model"),
                 "reasoning_effort": row.get("reasoning_effort"),
-                "byok": False,
                 "n_tasks": 0,
                 "n_trials": 0,
                 "tasks": defaultdict(list),
@@ -59,8 +61,8 @@ def build_pier_summary(job_dir: Path) -> dict[str, Any]:
         cell["n_trials"] += 1
         cell["tasks"][row["task"]].append(row)
 
-    variants = []
-    for cell in variant_cells.values():
+    agents = []
+    for cell in agent_cells.values():
         task_summaries = []
         all_trials = []
         for task_slug, trials in sorted(cell["tasks"].items()):
@@ -68,24 +70,23 @@ def build_pier_summary(job_dir: Path) -> dict[str, Any]:
             task_summaries.append(_aggregate_task(task_slug, trials))
         cell["tasks"] = task_summaries
         cell["n_tasks"] = len(task_summaries)
-        cell.update(_aggregate_variant(all_trials))
-        variants.append(cell)
+        cell.update(_aggregate_agent(all_trials))
+        agents.append(cell)
 
-    all_trials = [
-        trial for variant in variants for task in variant["tasks"] for trial in task["_trials"]
-    ]
+    all_trials = [trial for agent in agents for task in agent["tasks"] for trial in task["_trials"]]
     graded = [trial["success"] for trial in all_trials if trial.get("success") is not None]
     total_aiu = sum((trial.get("metrics") or {}).get("aiu") or 0 for trial in all_trials)
 
     summary = {
-        "run_id": job_dir.name,
-        "experiment": job_config.get("job_name") or job_dir.name,
-        "experiment_slug": job_dir.name,
+        "run_id": identity["run_id"],
+        "job": identity["job_name"],
+        "job_name": identity["job_name"],
+        "pier_job_id": identity["id"],
         "started_at": job_result.get("started_at"),
         "finished_at": job_result.get("finished_at"),
         "status": _job_status(job_result),
-        "n_variants": len(variants),
-        "n_tasks": max((variant.get("n_tasks", 0) for variant in variants), default=0),
+        "n_agents": len(agents),
+        "n_tasks": max((agent.get("n_tasks", 0) for agent in agents), default=0),
         "n_trials": len(all_trials),
         "n_failed_trials": sum(1 for trial in all_trials if trial.get("status") != "ok"),
         "n_harness_errors": sum(
@@ -98,7 +99,7 @@ def build_pier_summary(job_dir: Path) -> dict[str, Any]:
             (sum(1 for value in graded if value) / len(graded)) if graded else None
         ),
         "total_aiu": round(total_aiu, 3) if total_aiu else None,
-        "variants": [_strip_internal_trials(variant) for variant in variants],
+        "agents": [_strip_internal_trials(agent) for agent in agents],
     }
     return summary
 
@@ -110,14 +111,55 @@ def write_pier_summary(job_dir: Path) -> dict[str, Any]:
     return summary
 
 
+def write_pier_run_manifest(job_dir: Path, *, job_name: str, run_id: str) -> None:
+    """Persist the stable job identity beside Pier's run artifacts."""
+
+    write_json(
+        Path(job_dir) / PIER_RUN_MANIFEST,
+        {
+            "schema_version": 1,
+            "job_name": job_name,
+            "run_id": run_id,
+            "id": f"{job_name}/{run_id}",
+        },
+    )
+
+
+def pier_job_identity(job_dir: Path, job_config: dict[str, Any] | None = None) -> dict[str, str]:
+    """Return stable job identity and concrete run id for a Pier output directory."""
+
+    job_dir = Path(job_dir)
+    manifest_path = job_dir / PIER_RUN_MANIFEST
+    if manifest_path.exists():
+        manifest = read_json(manifest_path)
+        job_name = str(manifest.get("job_name") or job_dir.parent.name)
+        run_id = str(manifest.get("run_id") or job_dir.name)
+        return {"job_name": job_name, "run_id": run_id, "id": f"{job_name}/{run_id}"}
+
+    if job_dir.parent.parent.name == "jobs":
+        job_name = job_dir.parent.name
+        run_id = job_dir.name
+        return {"job_name": job_name, "run_id": run_id, "id": f"{job_name}/{run_id}"}
+
+    config = job_config or (
+        read_json(job_dir / "config.json") if (job_dir / "config.json").exists() else {}
+    )
+    job_name = str(config.get("job_name") or job_dir.parent.name)
+    return {"job_name": job_name, "run_id": job_dir.name, "id": f"{job_name}/{job_dir.name}"}
+
+
+def pier_job_label(job_dir: Path) -> str:
+    return pier_job_identity(job_dir)["id"]
+
+
 def resolve_pier_trial_events(
     job_dir: Path, trial: int | str | None = None
 ) -> tuple[Path | None, str]:
     trial_dir = _resolve_trial_dir(job_dir, trial)
     if trial_dir is None:
-        return None, Path(job_dir).name
+        return None, pier_job_label(job_dir)
     events = find_copilot_session_events(trial_dir / "agent")
-    return events, f"{Path(job_dir).name} · {trial_dir.name}"
+    return events, f"{pier_job_label(job_dir)} · {trial_dir.name}"
 
 
 def resolve_pier_trial_analysis_source(
@@ -125,9 +167,9 @@ def resolve_pier_trial_analysis_source(
 ) -> tuple[Path | None, str, AnalysisSource | None, Path | None]:
     trial_dir = _resolve_trial_dir(job_dir, trial)
     if trial_dir is None:
-        return None, Path(job_dir).name, None, None
+        return None, pier_job_label(job_dir), None, None
 
-    label = f"{Path(job_dir).name} · {trial_dir.name}"
+    label = f"{pier_job_label(job_dir)} · {trial_dir.name}"
     agent_dir = trial_dir / "agent"
     events = find_copilot_session_events(agent_dir)
     if events is not None:
@@ -194,10 +236,12 @@ def _trial_summary(trial_dir: Path, trial: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "trial_no": _trial_number(trial_dir),
+        "trial_dir": trial_dir.name,
         "trial_name": trial.get("trial_name") or trial_dir.name,
         "task": task_name,
         "task_name": task_name,
-        "variant": _variant_name(agent, model_info),
+        "agent": _agent_label(agent, model_info),
+        "agent_name": agent.get("name") or "agent",
         "model": model_info.get("name"),
         "reasoning_effort": (
             ((trial.get("config") or {}).get("agent") or {})
@@ -289,7 +333,7 @@ def _aggregate_task(task_slug: str, trials: list[dict[str, Any]]) -> dict[str, A
     }
 
 
-def _aggregate_variant(trials: list[dict[str, Any]]) -> dict[str, Any]:
+def _aggregate_agent(trials: list[dict[str, Any]]) -> dict[str, Any]:
     graded = [trial["success"] for trial in trials if trial.get("success") is not None]
     solved = sum(1 for value in graded if value)
     aiu_values = [(trial.get("metrics") or {}).get("aiu") for trial in trials]
@@ -326,13 +370,13 @@ def _aggregate_variant(trials: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _strip_internal_trials(variant: dict[str, Any]) -> dict[str, Any]:
-    variant = dict(variant)
-    variant["tasks"] = [
+def _strip_internal_trials(agent: dict[str, Any]) -> dict[str, Any]:
+    agent = dict(agent)
+    agent["tasks"] = [
         {key: value for key, value in task.items() if key != "_trials"}
-        for task in variant.get("tasks", [])
+        for task in agent.get("tasks", [])
     ]
-    return variant
+    return agent
 
 
 def _avg(values: list[Any]) -> float | None:
@@ -355,7 +399,7 @@ def _duration_seconds(started_at: str | None, finished_at: str | None) -> float 
     return round((finish - start).total_seconds(), 3)
 
 
-def _variant_name(agent: dict[str, Any], model: dict[str, Any]) -> str:
+def _agent_label(agent: dict[str, Any], model: dict[str, Any]) -> str:
     agent_name = agent.get("name") or "agent"
     model_name = model.get("name")
     return f"{agent_name}-{model_name}" if model_name else agent_name
