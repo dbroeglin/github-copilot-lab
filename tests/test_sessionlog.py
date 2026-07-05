@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from copilot_experiments.sessionlog import parse_metrics
+from pathlib import Path
+
+from copilot_experiments.sessionlog import load_events, parse_metrics
 
 
 def _events():
@@ -61,7 +63,7 @@ def test_parse_metrics_empty():
 # --------------------------------------------------------------------------- #
 
 
-def test_load_events_skips_blank_and_invalid_lines(tmp_path):
+def test_load_events_skips_blank_and_invalid_lines(tmp_path, capsys):
     from copilot_experiments.sessionlog import load_events
 
     path = tmp_path / "events.jsonl"
@@ -71,6 +73,9 @@ def test_load_events_skips_blank_and_invalid_lines(tmp_path):
     )
     events = load_events(path)
     assert [e["type"] for e in events] == ["session.start", "user.message"]
+
+    out, err = capsys.readouterr()
+    assert "Skipped 1 malformed JSON line(s)" in err
 
 
 def test_load_events_missing_file_returns_empty(tmp_path):
@@ -121,3 +126,20 @@ def test_compaction_start_tracks_peak_without_shutdown():
     econ = extract_economics(events)
     assert econ.total_tokens is None  # no shutdown -> no authoritative totals
     assert econ.peak_context_tokens == 9500  # 1000 + 8000 + 500
+
+
+def test_load_events_with_malformed_lines(tmp_path: Path, capsys):
+    events_file = tmp_path / "events.jsonl"
+    events_file.write_text(
+        '{"type": "session.start"}\n'
+        '{"type": "malformed"\n'  # bad json
+        '{"type": "session.end"}\n',
+        encoding="utf-8",
+    )
+    events = load_events(events_file)
+    assert len(events) == 2
+    assert events[0]["type"] == "session.start"
+    assert events[1]["type"] == "session.end"
+
+    out, err = capsys.readouterr()
+    assert "Skipped 1 malformed JSON line(s)" in err
