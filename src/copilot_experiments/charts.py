@@ -250,21 +250,22 @@ def _chart_resolution_vs_cost(agents: list[dict[str, Any]], colors: dict[str, st
         return None
     fig = go.Figure()
     for agent in points:
+        label = _esc(agent["name"])
         cost = agent["_cost"]
         std = agent.get("_cost_std")
+        color = colors[agent["name"]]
+        # Agent names are identified through the legend rather than printed on
+        # each point: Plotly has no collision avoidance for scatter text, so long
+        # names over closely spaced points would overlap. The legend wraps cleanly.
         fig.add_trace(
             go.Scatter(
                 x=[cost],
                 y=[_pct_value(agent.get("success_rate"))],
-                mode="markers+text",
-                name=_esc(agent["name"]),
-                text=[_esc(agent["name"])],
-                textposition="top center",
-                textfont={"size": 11, "color": _MUTED},
-                cliponaxis=False,
+                mode="markers",
+                name=label,
                 marker={
                     "size": 15,
-                    "color": colors[agent["name"]],
+                    "color": color,
                     "line": {"width": 1.5, "color": "#ffffff"},
                     "opacity": 0.95,
                 },
@@ -274,36 +275,21 @@ def _chart_resolution_vs_cost(agents: list[dict[str, Any]], colors: dict[str, st
                         "array": [std],
                         "thickness": 1.4,
                         "width": 6,
-                        "color": colors[agent["name"]],
+                        "color": color,
                     }
                     if std
                     else None
                 ),
                 hovertemplate=(
-                    f"%{{text}}<br>Success: %{{y:.0f}}%<br>{metric['label']}: "
+                    f"{label}<br>Success: %{{y:.0f}}%<br>{metric['label']}: "
                     f"%{{x:{metric['fmt']}}}{metric['suffix']}<extra></extra>"
                 ),
-                showlegend=False,
+                showlegend=True,
             )
         )
     fig.update_xaxes(title_text=metric["axis"], range=list(_cost_axis_bounds(points)))
-    # Extra headroom above 100% so the point labels (every agent can sit on the
-    # top line when success is high) are never clipped by the plot's top edge.
-    fig.update_yaxes(title_text="Success rate", ticksuffix="%", range=[-5, 118])
-    fig.add_annotation(
-        xref="paper",
-        yref="paper",
-        x=0.01,
-        y=0.99,
-        text="\u2196 better",
-        showarrow=False,
-        font={"size": 12, "color": _MUTED},
-        align="left",
-    )
+    fig.update_yaxes(title_text="Success rate", ticksuffix="%", range=[-5, 106])
     _apply_theme(fig)
-    # Wider side margins (plus cliponaxis=False above) keep the labels on the
-    # outermost points from being cut off at the left/right edges.
-    fig.update_layout(margin={"l": 84, "r": 84, "t": 28, "b": 56})
     return _fragment(fig, "chart-scatter", height=460)
 
 
@@ -532,12 +518,12 @@ def _cost_points(agents: list[dict[str, Any]]) -> tuple[dict[str, str], list[dic
 
 
 def _cost_axis_bounds(points: list[dict[str, Any]]) -> tuple[float, float]:
-    """X-range for the cost scatter, padded so labels on edge points stay on-canvas."""
+    """Padded x-range for the cost scatter so markers and error bars clear the edges."""
 
     lo = min(p["_cost"] - (p.get("_cost_std") or 0) for p in points)
     hi = max(p["_cost"] + (p.get("_cost_std") or 0) for p in points)
     span = hi - lo
-    pad = span * 0.25 if span > 0 else (abs(hi) or 1.0) * 0.6
+    pad = span * 0.1 if span > 0 else (abs(hi) or 1.0) * 0.4
     low = lo - pad
     if lo >= 0:  # keep a cost axis from dipping below zero
         low = max(0.0, low)
