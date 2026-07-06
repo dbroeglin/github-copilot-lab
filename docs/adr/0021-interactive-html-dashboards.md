@@ -33,14 +33,15 @@ giving crisp, interactive, shareable output.
 We will render each Pier run into a single self-contained `summary.html` dashboard built with
 [Plotly](https://plotly.com/python/), added as a new `charts.py` module.
 
-- Plotly is an **optional** dependency behind a `charts` extra (and the dev group). The dashboard
-  degrades gracefully: `run` skips it when Plotly is absent, and `chart` exits with an install
-  hint via a `ChartError`.
+- Plotly is a **core** runtime dependency, so the `chart` command and the automatic `run`
+  dashboard work with a normal install (`uvx`, `uv tool install`, `pip install`) and no extra to
+  enable. The import is still guarded defensively: if Plotly is somehow unavailable, `run` skips
+  the dashboard and `chart` exits with a clear `ChartError` instead of a bare `ImportError`.
 - `charts.build_dashboard_html(summary)` consumes the existing `summary.json` shape and returns a
   complete HTML string; `charts.write_dashboard(job_dir)` writes `summary.html` beside the other
   derived summaries. No new source-of-truth state is introduced.
 - A new `chart` CLI command produces the dashboard on demand (`--last`, `--out`, `--cdn`,
-  `--open`), and `run` emits it automatically when Plotly is available.
+  `--open`), and `run` emits it automatically after each job.
 - By default plotly.js is embedded for zero-dependency offline viewing; `--cdn` produces a small
   file that loads plotly.js from the CDN.
 - To feed the charts we populated the previously stubbed variance/coverage aggregates in
@@ -54,9 +55,8 @@ We will render each Pier run into a single self-contained `summary.html` dashboa
   regenerable at any time.
 - `summary.json` gained documented spread and suite-coverage fields, which also benefit `show`
   and any future consumer; `report.py` key names were corrected to match.
-- We accept a large optional dependency. The embedded offline build is ~4.5 MB per file; `--cdn`
-  is available when size matters. Because the extra is optional, the core tool and its offline
-  tests never require Plotly (chart tests use the `cdn=True` path or monkeypatch the import to
-  assert graceful degradation).
+- We accept a large runtime dependency (Plotly bundles plotly.js). The embedded offline build is
+  ~4.5 MB per file; `--cdn` is available when size matters. Offline tests stay fast by using the
+  `cdn=True` path or monkeypatching the import to assert the defensive `ChartError`.
 - Future chart tweaks live entirely in `charts.py` and read only the summary dict, so rendering
   stays decoupled from metric derivation per ADR 0006.

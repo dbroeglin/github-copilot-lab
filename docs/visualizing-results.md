@@ -21,17 +21,12 @@ uv run copilot-experiments chart --last --out report.html
 uv run copilot-experiments chart --last --cdn
 ```
 
-`run` also emits `summary.html` automatically after each Pier job when Plotly is installed, so a
-freshly finished experiment already has a shareable dashboard next to its `summary.json`.
+`run` also emits `summary.html` automatically after each Pier job, so a freshly finished
+experiment already has a shareable dashboard next to its `summary.json`.
 
-Plotly is an **optional** dependency. Install it with the `charts` extra:
-
-```bash
-uv sync --extra charts      # or: pip install copilot-experiments[charts]
-```
-
-When Plotly is missing, `run` silently skips the dashboard (everything else still works) and
-`chart` exits with an install hint.
+Plotly ships as a core dependency, so `chart` and the automatic `run` dashboard work out of the
+box with a normal install (`uv sync`, `uvx copilot-experiments`, `uv tool install`, or `pip
+install copilot-experiments`) -- there is no extra to enable.
 
 ## What the dashboard shows
 

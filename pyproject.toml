@@ -13,11 +13,9 @@ dependencies = [
     "pyyaml>=6.0",
     "typer>=0.12",
     "rich>=13.7",
+    # Renders the interactive, self-contained HTML result dashboards (`chart` / `run`).
+    "plotly>=5.20",
 ]
-
-[project.optional-dependencies]
-# Interactive, self-contained HTML result dashboards.
-charts = ["plotly>=5.20"]
 
 [project.scripts]
 copilot-experiments = "copilot_experiments.cli:app"
@@ -39,8 +37,6 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=6.0",
     "ruff>=0.5",
-    # Installed so the offline test suite exercises the charts module.
-    "plotly>=5.20",
 ]
 
 [tool.ruff]

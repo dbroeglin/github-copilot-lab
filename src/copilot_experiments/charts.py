@@ -7,9 +7,9 @@ leaderboard and the GitHub Copilot agentic-harness benchmarking report: a clean
 header, KPI cards, a ranked leaderboard, and a small set of interactive
 [Plotly](https://plotly.com/python/) charts.
 
-Plotly is an *optional* dependency (``pip install copilot-experiments[charts]``).
-The public helpers raise :class:`ChartError` with an install hint when it is
-missing so the rest of the tool keeps working without it.
+Plotly is a required runtime dependency. The import is still guarded, so if it
+is somehow unavailable (e.g. a broken or partial install) the public helpers
+raise :class:`ChartError` with a clear message instead of a bare ``ImportError``.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from typing import Any
 
 from ._util import write_text
 
-try:  # optional dependency
+try:  # required dependency, guarded defensively against a broken install
     import plotly.graph_objects as go
     import plotly.io as pio
     from plotly.offline import get_plotlyjs, get_plotlyjs_version
@@ -38,8 +38,9 @@ class ChartError(RuntimeError):
 
 
 _INSTALL_HINT = (
-    "Plotly is required to render HTML dashboards. Install the charts extra with "
-    "`pip install copilot-experiments[charts]` (or `uv sync --extra charts`)."
+    "Plotly is required to render HTML dashboards but could not be imported. "
+    "Reinstall copilot-experiments to restore it (for example `uv sync` or "
+    "`pip install --force-reinstall copilot-experiments`)."
 )
 
 # ---------------------------------------------------------------------------
@@ -197,7 +198,7 @@ def write_dashboard(
 
 
 def plotly_available() -> bool:
-    """Return ``True`` when the optional Plotly dependency can be imported."""
+    """Return ``True`` when the Plotly dependency can be imported."""
 
     return _PLOTLY_IMPORT_ERROR is None
 

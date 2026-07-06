@@ -195,7 +195,7 @@ def test_graceful_degradation_when_plotly_missing(tmp_path: Path, monkeypatch: p
     assert plotly_available() is False
     with pytest.raises(ChartError) as excinfo:
         build_dashboard_html(_MULTI_TASK_SUMMARY)
-    assert "charts" in str(excinfo.value).lower()
+    assert "plotly" in str(excinfo.value).lower()
 
     with pytest.raises(ChartError):
         write_dashboard(tmp_path, summary=_MULTI_TASK_SUMMARY)
