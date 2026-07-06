@@ -18,6 +18,7 @@ from .deepswe import DeepSweImportError, write_deepswe_job_config
 from .pier_backend import (
     PierBackendPreflightError,
     PierJobSpec,
+    check_jobs_dir_writable,
     discover_pier_job_configs,
     inject_copilot_token,
     preflight_pier_backend,
@@ -543,6 +544,12 @@ def _validate_pier_specs(specs: list[PierJobSpec]) -> list[ValidationCheck]:
             checks.append(ValidationCheck(f"{prefix}: backend", False, str(exc)))
         else:
             checks.append(ValidationCheck(f"{prefix}: backend", True, "preflight OK"))
+        try:
+            check_jobs_dir_writable(spec.config)
+        except PierBackendPreflightError as exc:
+            checks.append(ValidationCheck(f"{prefix}: jobs dir", False, str(exc)))
+        else:
+            checks.append(ValidationCheck(f"{prefix}: jobs dir", True, "writable"))
 
     if all(check.ok for check in checks):
         try:
