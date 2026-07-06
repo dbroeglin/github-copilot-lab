@@ -1,4 +1,4 @@
-# 0021. The copilot-cli egress allowlist uses dotted-wildcard domains only
+# 0022. The copilot-cli egress allowlist uses dotted-wildcard domains only
 
 - **Status:** Accepted
 - **Date:** 2026-07-06
