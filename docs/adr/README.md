@@ -37,3 +37,4 @@ We follow the lightweight format popularized by
 | [0018](0018-adopt-pytest-cov-for-local-coverage-analysis.md) | Adopt pytest-cov for local coverage analysis | Accepted |
 | [0019](0019-use-nested-pier-run-directories.md) | Use nested Pier run directories | Accepted |
 | [0020](0020-remove-legacy-native-harness.md) | Remove the legacy native harness | Accepted |
+| [0021](0021-copilot-cli-egress-allowlist-uses-wildcard-domains.md) | The copilot-cli egress allowlist uses dotted-wildcard domains only | Accepted |

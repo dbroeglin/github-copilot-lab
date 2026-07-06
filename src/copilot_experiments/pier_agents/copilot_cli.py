@@ -98,14 +98,16 @@ class CopilotCli(BaseInstalledAgent):
         return match.group(1) if match else text
 
     def network_allowlist(self) -> NetworkAllowlist:
+        # Pier's egress proxy is Squid, whose dstdomain ACL treats a bare domain
+        # and its ".domain" wildcard as a fatal conflict ("'.github.com' is a
+        # subdomain of 'github.com'"). Listing both crashes the proxy container
+        # (exit 1) and fails every trial. A leading-dot entry already matches the
+        # apex domain *and* all subdomains, so we list only the wildcard forms
+        # (plus the bare redirector host gh.io, which has no subdomains).
         return NetworkAllowlist(
             domains=[
-                "api.github.com",
-                "github.com",
                 ".github.com",
-                "githubcopilot.com",
                 ".githubcopilot.com",
-                "githubusercontent.com",
                 ".githubusercontent.com",
                 "gh.io",
             ]

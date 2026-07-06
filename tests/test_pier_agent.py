@@ -40,7 +40,14 @@ def test_copilot_cli_install_spec_and_allowlist(tmp_path: Path):
     assert install.version == "1.0.64"
     assert any("https://gh.io/copilot-install" in step.run for step in install.steps)
     assert install.verification_command and "copilot --version" in install.verification_command
-    assert {"github.com", "api.github.com", "githubcopilot.com", "gh.io"} <= domains
+    # Leading-dot wildcards cover the apex domain and all subdomains.
+    assert {".github.com", ".githubcopilot.com", ".githubusercontent.com", "gh.io"} <= domains
+    # Squid's dstdomain ACL fatals when a domain is listed both bare and as
+    # ".domain"; guard against reintroducing such a conflict.
+    bare = {d for d in domains if not d.startswith(".")}
+    assert not any(f".{d}" in domains for d in bare), (
+        "allowlist must not contain a domain both bare and as a .domain wildcard"
+    )
 
 
 def test_copilot_cli_version_parser(tmp_path: Path):
