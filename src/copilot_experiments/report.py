@@ -84,10 +84,10 @@ def summary_markdown(summary: dict, description: str = "") -> str:
                 "{api} |".format(
                     name=agent["name"],
                     avg_aiu=_aiu(agent.get("avg_aiu")),
-                    aiu_cv=_fmt(agent.get("aiu_cv")),
+                    aiu_cv=_fmt(agent.get("cv_aiu")),
                     aiu_solve=_aiu(agent.get("aiu_per_solve")),
                     tokens=_fmt(agent.get("avg_total_tokens")),
-                    token_cv=_fmt(agent.get("total_tokens_cv")),
+                    token_cv=_fmt(agent.get("cv_total_tokens")),
                     api=_fmt(agent.get("avg_api_duration_s")),
                 )
             )
