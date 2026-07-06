@@ -28,6 +28,7 @@ uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments validate
 uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments run
 uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments list
 uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments show --last
+uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments chart --last --open
 
 # explore results
 uvx --from "$COPILOT_EXPERIMENTS_REPO" copilot-experiments list
@@ -57,11 +58,29 @@ uv run copilot-experiments validate
 uv run copilot-experiments run
 uv run copilot-experiments list
 uv run copilot-experiments show --last
+uv run copilot-experiments chart --last --open
 
 # explore results
 uv run copilot-experiments list
 uv run copilot-experiments inspect <job-name>/<run-id> --agent copilot-cli --trial 1
 uv run copilot-experiments analyze <job-name>/<run-id> --agent copilot-cli --trial 1
+```
+
+## Troubleshooting
+
+### `PermissionError` creating a run directory under `jobs/`
+
+The Pier Docker backend runs task containers as `root` and bind-mounts the `jobs/`
+directory, so a completed run can leave `jobs/` (and its contents) owned by `root`. A later
+run started as your normal user then cannot create a new run directory under it, and Pier
+fails with a bare `PermissionError: [Errno 13] Permission denied: '.../jobs/<job-name>'`.
+
+`validate` and `run` now preflight this and report `jobs dir` as not writable with the fix,
+but if you hit it directly, reclaim ownership (or remove the stale output) and retry:
+
+```bash
+sudo chown -R "$(id -u):$(id -g)" jobs   # reclaim ownership, or
+sudo rm -rf jobs                         # discard stale outputs
 ```
 
 ## Writing experiments

@@ -13,6 +13,8 @@ dependencies = [
     "pyyaml>=6.0",
     "typer>=0.12",
     "rich>=13.7",
+    # Renders the interactive, self-contained HTML result dashboards (`chart` / `run`).
+    "plotly>=5.20",
 ]
 
 [project.scripts]

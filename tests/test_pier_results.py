@@ -9,6 +9,10 @@ from typer.testing import CliRunner
 
 from copilot_experiments.cli import app
 from copilot_experiments.pier_results import (
+    _aggregate_agent,
+    _aggregate_task,
+    _cv,
+    _std,
     build_pier_summary,
     describe_missing_pier_analysis_source,
     pier_job_identity,
@@ -442,3 +446,85 @@ def test_write_pier_summary(tmp_path: Path):
     assert summary["n_agents"] == 1
     assert summary["agents"][0]["name"] == "copilot-cli-gpt-5-mini"
     assert "Agent" in (job_dir / "summary.md").read_text(encoding="utf-8")
+
+
+def _trial(success: bool | None, aiu: float | None, tokens: float | None, task: str = "t") -> dict:
+    return {
+        "success": success,
+        "task": task,
+        "task_name": task,
+        "metrics": {"aiu": aiu, "total_tokens": tokens},
+    }
+
+
+def test_std_and_cv_helpers():
+    assert _std([100, 200, 300]) == 81.65
+    assert _cv([100, 200, 300]) == 0.408
+    assert _std([50]) == 0.0  # a single trial has zero spread, not None
+    assert _std([]) is None
+    assert _cv([]) is None
+    assert _cv([0, 0]) is None  # undefined when the mean is zero
+
+
+def test_aggregate_task_populates_variance_and_resolved_rate():
+    task = _aggregate_task("t", [_trial(True, 0.2, 100), _trial(False, 0.3, 300)])
+
+    assert task["success_rate"] == 0.5
+    assert task["resolved"] == 1
+    assert task["resolved_rate"] == 1.0
+    assert task["cv_aiu"] == _cv([0.2, 0.3])
+    assert task["cv_total_tokens"] == _cv([100, 300])
+
+
+def test_aggregate_task_resolved_rate_zero_when_never_solved():
+    task = _aggregate_task("t", [_trial(False, 0.2, 100), _trial(False, 0.3, 300)])
+
+    assert task["resolved"] == 0
+    assert task["resolved_rate"] == 0.0
+
+
+def test_aggregate_agent_populates_std_cv_and_suite_coverage():
+    trials = [
+        _trial(True, 0.2, 100, "a"),
+        _trial(False, 0.4, 300, "a"),
+        _trial(True, 0.1, 90, "b"),
+    ]
+    task_summaries = [
+        {"success_rate": 0.5, "resolved_rate": 1.0},
+        {"success_rate": 1.0, "resolved_rate": 0.0},
+    ]
+
+    agent = _aggregate_agent(trials, task_summaries)
+
+    assert agent["std_aiu"] == _std([0.2, 0.4, 0.1])
+    assert agent["cv_aiu"] == _cv([0.2, 0.4, 0.1])
+    assert agent["std_total_tokens"] == _std([100, 300, 90])
+    assert agent["cv_total_tokens"] == _cv([100, 300, 90])
+    assert agent["mean_resolved_rate"] == 0.75  # mean of per-task success rates
+    assert agent["resolved_at_k_rate"] == 0.5  # fraction of tasks solved at least once
+
+
+def test_build_pier_summary_populates_new_aggregates(tmp_path: Path):
+    job_dir = _make_pier_job(tmp_path / "jobs" / "demo-job")
+
+    summary = build_pier_summary(job_dir)
+    agent = summary["agents"][0]
+
+    # A single graded trial resolves its one task, so coverage is fully populated.
+    assert agent["mean_resolved_rate"] == 1.0
+    assert agent["resolved_at_k_rate"] == 1.0
+    assert agent["cv_total_tokens"] is not None
+    assert agent["tasks"][0]["resolved_rate"] == 1.0
+
+
+def test_cli_chart_writes_dashboard(tmp_path: Path):
+    job_dir = _make_pier_job(tmp_path / "jobs" / "demo-job" / "20260620-153000")
+    write_pier_run_manifest(job_dir, job_name="demo-job", run_id="20260620-153000")
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["chart", "--last", "--cdn", "--root", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    dashboard = job_dir / "summary.html"
+    assert dashboard.exists()
+    assert "<!DOCTYPE html>" in dashboard.read_text(encoding="utf-8")

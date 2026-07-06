@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import statistics
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -70,7 +71,7 @@ def build_pier_summary(job_dir: Path) -> dict[str, Any]:
             task_summaries.append(_aggregate_task(task_slug, trials))
         cell["tasks"] = task_summaries
         cell["n_tasks"] = len(task_summaries)
-        cell.update(_aggregate_agent(all_trials))
+        cell.update(_aggregate_agent(all_trials, task_summaries))
         agents.append(cell)
 
     all_trials = [trial for agent in agents for task in agent["tasks"] for trial in task["_trials"]]
@@ -313,49 +314,55 @@ def _job_status(job_result: dict[str, Any]) -> str:
 def _aggregate_task(task_slug: str, trials: list[dict[str, Any]]) -> dict[str, Any]:
     graded = [trial["success"] for trial in trials if trial.get("success") is not None]
     aiu_values = [(trial.get("metrics") or {}).get("aiu") for trial in trials]
+    token_values = _metric_values(trials, "total_tokens")
     total_aiu = sum(value for value in aiu_values if value is not None)
     solved = sum(1 for value in graded if value)
+    resolved = None if not graded else int(any(graded))
     return {
         "task": task_slug,
         "name": trials[0].get("task_name") or task_slug,
         "n_trials": len(trials),
         "success_rate": (solved / len(graded)) if graded else None,
-        "resolved": None if not graded else int(any(graded)),
+        "resolved": resolved,
+        "resolved_rate": None if resolved is None else float(resolved),
         "avg_duration_s": _avg([trial.get("duration_s") for trial in trials]),
         "avg_turns": _avg(_metric_values(trials, "n_turns")),
-        "avg_total_tokens": _avg(_metric_values(trials, "total_tokens")),
-        "cv_total_tokens": None,
+        "avg_total_tokens": _avg(token_values),
+        "cv_total_tokens": _cv(token_values),
         "avg_aiu": _avg(aiu_values),
-        "cv_aiu": None,
+        "cv_aiu": _cv(aiu_values),
         "total_aiu": round(total_aiu, 3) if total_aiu else None,
         "aiu_per_solve": round(total_aiu / solved, 3) if total_aiu and solved else None,
         "_trials": trials,
     }
 
 
-def _aggregate_agent(trials: list[dict[str, Any]]) -> dict[str, Any]:
+def _aggregate_agent(
+    trials: list[dict[str, Any]], task_summaries: list[dict[str, Any]]
+) -> dict[str, Any]:
     graded = [trial["success"] for trial in trials if trial.get("success") is not None]
     solved = sum(1 for value in graded if value)
     aiu_values = [(trial.get("metrics") or {}).get("aiu") for trial in trials]
+    token_values = _metric_values(trials, "total_tokens")
     total_aiu = sum(value for value in aiu_values if value is not None)
     return {
         "success_rate": (solved / len(graded)) if graded else None,
-        "mean_resolved_rate": None,
-        "resolved_at_k_rate": None,
+        "mean_resolved_rate": _avg([task.get("success_rate") for task in task_summaries]),
+        "resolved_at_k_rate": _avg([task.get("resolved_rate") for task in task_summaries]),
         "avg_duration_s": _avg([trial.get("duration_s") for trial in trials]),
         "avg_turns": _avg(_metric_values(trials, "n_turns")),
         "avg_tool_calls": _avg(_metric_values(trials, "n_tool_calls")),
         "avg_tool_failures": _avg(_metric_values(trials, "n_tool_failures")),
-        "avg_total_tokens": _avg(_metric_values(trials, "total_tokens")),
-        "std_total_tokens": None,
-        "cv_total_tokens": None,
+        "avg_total_tokens": _avg(token_values),
+        "std_total_tokens": _std(token_values),
+        "cv_total_tokens": _cv(token_values),
         "avg_input_tokens": _avg(_metric_values(trials, "input_tokens")),
         "avg_output_tokens": _avg(_metric_values(trials, "output_tokens")),
         "avg_cache_read_tokens": _avg(_metric_values(trials, "cache_read_tokens")),
         "avg_reasoning_tokens": _avg(_metric_values(trials, "reasoning_tokens")),
         "avg_aiu": _avg(aiu_values),
-        "std_aiu": None,
-        "cv_aiu": None,
+        "std_aiu": _std(aiu_values),
+        "cv_aiu": _cv(aiu_values),
         "total_aiu": round(total_aiu, 3) if total_aiu else None,
         "aiu_per_solve": round(total_aiu / solved, 3) if total_aiu and solved else None,
         "avg_lines_added": _avg(_metric_values(trials, "lines_added")),
@@ -382,6 +389,23 @@ def _strip_internal_trials(agent: dict[str, Any]) -> dict[str, Any]:
 def _avg(values: list[Any]) -> float | None:
     nums = [float(value) for value in values if value is not None]
     return round(sum(nums) / len(nums), 3) if nums else None
+
+
+def _std(values: list[Any]) -> float | None:
+    """Population standard deviation across a cell's trials (0.0 for a single point)."""
+    nums = [float(value) for value in values if value is not None]
+    return round(statistics.pstdev(nums), 3) if nums else None
+
+
+def _cv(values: list[Any]) -> float | None:
+    """Coefficient of variation (std / mean); ``None`` when undefined."""
+    nums = [float(value) for value in values if value is not None]
+    if not nums:
+        return None
+    mean = sum(nums) / len(nums)
+    if mean == 0:
+        return None
+    return round(statistics.pstdev(nums) / mean, 3)
 
 
 def _metric_values(trials: list[dict[str, Any]], name: str) -> list[Any]:

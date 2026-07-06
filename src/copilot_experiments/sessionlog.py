@@ -8,8 +8,12 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from rich.console import Console
+
 from . import pricing
 from .models import Metrics, ModelMetric, TokenEconomics
+
+err = Console(stderr=True)
 
 
 def session_state_root(base: Path | None = None) -> Path:
@@ -27,6 +31,7 @@ def load_events(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     events: list[dict[str, Any]] = []
+    skipped_lines = 0
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:
@@ -34,7 +39,15 @@ def load_events(path: Path) -> list[dict[str, Any]]:
         try:
             events.append(json.loads(line))
         except json.JSONDecodeError:
+            skipped_lines += 1
             continue
+
+    if skipped_lines > 0:
+        err.print(
+            f"[yellow]Warning: Skipped {skipped_lines} malformed JSON line(s) "
+            f"in {path.name}[/yellow]"
+        )
+
     return events
 
 

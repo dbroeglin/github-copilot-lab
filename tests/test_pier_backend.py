@@ -13,6 +13,7 @@ from copilot_experiments.cli import app
 from copilot_experiments.pier_backend import (
     COPILOT_CLI_AGENT_IMPORT_PATH,
     PierBackendPreflightError,
+    check_jobs_dir_writable,
     discover_pier_job_configs,
     inject_copilot_token,
     load_pier_job_config,
@@ -216,6 +217,51 @@ def test_cli_run_fails_before_auth_when_pier_backend_preflight_fails(
     assert "Validation" in result.output
     assert "smoke: backend" in result.output
     assert "Docker is unavailable" in result.output
+
+
+def test_check_jobs_dir_writable_passes_for_writable_tree(tmp_path: Path):
+    config_path = tmp_path / "job.yaml"
+    config_path.write_text("job_name: smoke\njobs_dir: jobs\n", encoding="utf-8")
+    config = load_pier_job_config(config_path, root=tmp_path)
+
+    # tmp_path is writable, so the not-yet-created jobs/smoke tree is reachable.
+    check_jobs_dir_writable(config)
+
+
+def test_check_jobs_dir_writable_reports_nearest_existing_ancestor(tmp_path: Path):
+    config_path = tmp_path / "job.yaml"
+    config_path.write_text("job_name: smoke\njobs_dir: jobs\n", encoding="utf-8")
+    config = load_pier_job_config(config_path, root=tmp_path)
+    jobs_dir = tmp_path / "jobs"
+    jobs_dir.mkdir()
+
+    blocked = {jobs_dir}
+    with pytest.raises(PierBackendPreflightError) as excinfo:
+        check_jobs_dir_writable(config, writable=lambda directory: directory not in blocked)
+
+    message = str(excinfo.value)
+    # The existing but unwritable ancestor (jobs/) is reported, not the missing run dir.
+    assert str(jobs_dir) in message
+    assert "chown" in message
+    # The intended run directory is still named for context.
+    assert str(tmp_path / "jobs" / "smoke") in message
+
+
+def test_cli_validate_flags_unwritable_jobs_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    experiments = tmp_path / "experiments"
+    experiments.mkdir()
+    (experiments / "job.yaml").write_text("job_name: smoke\n", encoding="utf-8")
+
+    def fail_writable(_config, **_kwargs):
+        raise PierBackendPreflightError("not writable; run chown")
+
+    monkeypatch.setattr("copilot_experiments.cli.check_jobs_dir_writable", fail_writable)
+
+    result = CliRunner().invoke(app, ["validate", "--root", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "smoke: jobs dir" in result.output
+    assert "chown" in result.output
 
 
 @pytest.mark.parametrize(
