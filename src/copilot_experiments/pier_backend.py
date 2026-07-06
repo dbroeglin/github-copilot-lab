@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -138,6 +140,44 @@ def preflight_pier_backend(config: Any) -> None:
     backend = _environment_type(config)
     if backend == "docker":
         _preflight_docker_backend()
+
+
+def check_jobs_dir_writable(
+    config: Any,
+    *,
+    writable: Callable[[Path], bool] | None = None,
+) -> None:
+    """Fail fast when the harness cannot create the job's run directory.
+
+    Pier creates ``jobs_dir / job_name`` with ``Path.mkdir(parents=True)``. When an
+    earlier run left that tree owned by another user -- most commonly ``root``, because
+    Pier's Docker backend runs containers as root and bind-mounts the jobs directory --
+    the current user can no longer create entries under it and Pier raises a bare
+    ``PermissionError``. Detect that here and surface an actionable remediation instead.
+    """
+
+    is_writable = writable or (lambda directory: os.access(directory, os.W_OK | os.X_OK))
+    target = _job_dir(config)
+    anchor = _nearest_existing_ancestor(target)
+    if is_writable(anchor):
+        return
+    raise PierBackendPreflightError(
+        f"Cannot write to {anchor}, which is needed to create the run directory "
+        f"{target}. An earlier run probably created it as another user (for example "
+        f"root, via the Pier Docker backend), so the current user can no longer create "
+        f"entries under it. Reclaim ownership with "
+        f'`sudo chown -R "$(id -u):$(id -g)" {anchor}` '
+        f"or remove the stale output directory, then retry."
+    )
+
+
+def _nearest_existing_ancestor(path: Path) -> Path:
+    """Return ``path`` or its closest existing ancestor directory."""
+
+    for candidate in (path, *path.parents):
+        if candidate.exists():
+            return candidate
+    return Path(path.anchor) if path.anchor else Path(".")
 
 
 def inject_copilot_token(config: Any, token: str) -> None:

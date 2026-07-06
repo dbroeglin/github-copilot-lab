@@ -102,6 +102,13 @@ jobs/
 `events.jsonl`; if no native events exist, `analyze` and summaries can fall back to
 `agent/trajectory.json`.
 
+> **Root-owned `jobs/` directories.** The Pier Docker backend runs task containers as `root`
+> and bind-mounts `jobs/`, so a completed run can leave `jobs/` (and its contents) owned by
+> `root`. A subsequent run started as your normal user then cannot create a new run directory
+> under it and Pier fails with a bare `PermissionError` on `jobs/<job-name>`. `validate` and
+> `run` preflight this and report the `jobs dir` check as not writable with the fix; to clear it
+> manually, run `sudo chown -R "$(id -u):$(id -g)" jobs` (or `sudo rm -rf jobs`) and retry.
+
 ## Standalone capture recipe
 
 For ad hoc runs outside Pier, generate a session id and copy the session state after Copilot exits:
