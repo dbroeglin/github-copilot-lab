@@ -261,6 +261,7 @@ def _chart_resolution_vs_cost(agents: list[dict[str, Any]], colors: dict[str, st
                 text=[_esc(agent["name"])],
                 textposition="top center",
                 textfont={"size": 11, "color": _MUTED},
+                cliponaxis=False,
                 marker={
                     "size": 15,
                     "color": colors[agent["name"]],
@@ -285,8 +286,10 @@ def _chart_resolution_vs_cost(agents: list[dict[str, Any]], colors: dict[str, st
                 showlegend=False,
             )
         )
-    fig.update_xaxes(title_text=metric["axis"])
-    fig.update_yaxes(title_text="Success rate", ticksuffix="%", range=[-5, 105])
+    fig.update_xaxes(title_text=metric["axis"], range=list(_cost_axis_bounds(points)))
+    # Extra headroom above 100% so the point labels (every agent can sit on the
+    # top line when success is high) are never clipped by the plot's top edge.
+    fig.update_yaxes(title_text="Success rate", ticksuffix="%", range=[-5, 118])
     fig.add_annotation(
         xref="paper",
         yref="paper",
@@ -298,6 +301,9 @@ def _chart_resolution_vs_cost(agents: list[dict[str, Any]], colors: dict[str, st
         align="left",
     )
     _apply_theme(fig)
+    # Wider side margins (plus cliponaxis=False above) keep the labels on the
+    # outermost points from being cut off at the left/right edges.
+    fig.update_layout(margin={"l": 84, "r": 84, "t": 28, "b": 56})
     return _fragment(fig, "chart-scatter", height=460)
 
 
@@ -523,6 +529,19 @@ def _cost_points(agents: list[dict[str, Any]]) -> tuple[dict[str, str], list[dic
         std = agent.get("std_aiu") if use_aiu else agent.get("std_total_tokens")
         points.append({**agent, "_cost": cost, "_cost_std": std})
     return metric, points
+
+
+def _cost_axis_bounds(points: list[dict[str, Any]]) -> tuple[float, float]:
+    """X-range for the cost scatter, padded so labels on edge points stay on-canvas."""
+
+    lo = min(p["_cost"] - (p.get("_cost_std") or 0) for p in points)
+    hi = max(p["_cost"] + (p.get("_cost_std") or 0) for p in points)
+    span = hi - lo
+    pad = span * 0.25 if span > 0 else (abs(hi) or 1.0) * 0.6
+    low = lo - pad
+    if lo >= 0:  # keep a cost axis from dipping below zero
+        low = max(0.0, low)
+    return low, hi + pad
 
 
 def _task_order(agents: list[dict[str, Any]]) -> dict[str, str]:
