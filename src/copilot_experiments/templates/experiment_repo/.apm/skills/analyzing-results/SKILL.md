@@ -16,6 +16,7 @@ jobs/<job-name>/<run-id>/
   copilot-experiments-run.json
   summary.json        # derived copilot-experiments summary
   summary.md          # human-readable report
+  summary.html        # interactive Plotly dashboard (chart / run)
   <trial-name>/
     result.json       # Pier trial result
     agent/
@@ -32,6 +33,7 @@ tokens, and AIU economics.
 ```bash
 copilot-experiments list                 # runs + success rates
 copilot-experiments show --last          # per-agent comparison table
+copilot-experiments chart --last --open  # interactive summary.html dashboard
 copilot-experiments inspect <job-name>   # latest run for that Pier job
 copilot-experiments inspect <job-name>/<run-id>  # exact run selector from list
 copilot-experiments analyze <job-name>/<run-id> --agent <agent> --trial <n>

@@ -17,7 +17,7 @@ flowchart LR
     A --> S["native Copilot\ncopilot-session/**/events.jsonl"]
     P --> O["jobs/<job>/<run-id>/\nPier result.json + trials"]
     S --> C["Copilot-native analysis\nAIU, tokens, tools, turns"]
-    O --> R["summary.json / summary.md\nshow / inspect / analyze"]
+    O --> R["summary.json / summary.md / summary.html\nshow / chart / inspect / analyze"]
 ```
 
 - **Tasks** are Harbor/Pier task directories: `task.toml`, `instruction.md`, `environment/`,
@@ -47,6 +47,7 @@ uv run copilot-experiments validate
 uv run copilot-experiments run
 uv run copilot-experiments list
 uv run copilot-experiments show --last
+uv run copilot-experiments chart --last --open
 uv run copilot-experiments analyze --last
 ```
 
@@ -106,6 +107,7 @@ uv run copilot-experiments analyze --root examples/tracer_bullet --last
 | `run --resume` | Resume an existing Pier job directory and skip already-completed matching trials. |
 | `list` | List Pier job configs and copyable run selectors. |
 | `show <selector>` / `show --last` | Print a summary for a Pier run (`job` or `job/run`). |
+| `chart <selector>` / `chart --last` | Write an interactive `summary.html` dashboard for a Pier run (`--open`, `--out`, `--cdn`). |
 | `inspect <selector>` | Drill into stored trials by `--agent`, `--task`, and `--trial`. |
 | `analyze <selector>` / `analyze --last` / `analyze --file <events.jsonl>` | Render a rich overview of a selected Copilot session log. |
 
@@ -116,6 +118,7 @@ uv run copilot-experiments analyze --root examples/tracer_bullet --last
 - [`docs/deepswe.md`](docs/deepswe.md) - importing and running DeepSWE tasks through Pier.
 - [`docs/collecting-run-data.md`](docs/collecting-run-data.md) - everything to collect around a Copilot CLI run, including native `events.jsonl`, Pier artifacts, ATIF, and OTel.
 - [`docs/results-format.md`](docs/results-format.md) - Pier `jobs/` layout and derived summaries.
+- [`docs/visualizing-results.md`](docs/visualizing-results.md) - interactive `summary.html` dashboards.
 - [`docs/analysis.md`](docs/analysis.md) - native Copilot session analysis.
 - [`docs/byok-and-local-models.md`](docs/byok-and-local-models.md) - provider env for Copilot CLI.
 - [`docs/adr/`](docs/adr) - architecture decision records.

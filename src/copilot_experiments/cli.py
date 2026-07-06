@@ -13,6 +13,7 @@ from rich.table import Table
 from ._util import read_json
 from .analysis import analyze_events, analyze_trajectory
 from .auth import AuthError, preflight_github_token
+from .charts import ChartError, plotly_available, write_dashboard
 from .deepswe import DeepSweImportError, write_deepswe_job_config
 from .pier_backend import (
     PierBackendPreflightError,
@@ -273,6 +274,12 @@ def run(
         summary = write_pier_summary(run_result.job_dir)
         _print_run_summary(summary)
         _warn_failed_pier_trials(run_result.job_dir)
+        if plotly_available():
+            try:
+                html_path = write_dashboard(run_result.job_dir, summary=summary)
+                console.print(f"[dim]chart:[/dim] {html_path}")
+            except ChartError:
+                pass
         if summary.get("status") != "completed":
             any_failures = True
         console.print(f"[dim]results:[/dim] {run_result.job_dir}\n")
@@ -340,6 +347,43 @@ def show(
     summary = write_pier_summary(resolved.path)
     _print_run_summary(summary)
     console.print(f"\n[dim]{resolved.path / 'summary.md'}[/dim]")
+
+
+@app.command()
+def chart(
+    selector: str | None = typer.Argument(
+        None,
+        help="Pier run selector from `list`: job, run id/prefix, or job/run.",
+    ),
+    last: bool = typer.Option(False, "--last", help="Chart the most recent stored Pier run."),
+    out: Path | None = typer.Option(
+        None, "--out", help="Write the dashboard here (default: <run>/summary.html)."
+    ),
+    cdn: bool = typer.Option(
+        False,
+        "--cdn",
+        help="Load plotly.js from its CDN (tiny file, but needs network to view).",
+    ),
+    open_browser: bool = typer.Option(
+        False, "--open", help="Open the dashboard in your web browser when done."
+    ),
+    root: Path | None = typer.Option(None, "--root", help="Experiment repository root."),
+) -> None:
+    """Render an interactive HTML dashboard (summary.html) for a Pier run."""
+
+    resolved = _resolve_or_exit(root, selector, last=last)
+    summary = write_pier_summary(resolved.path)
+    try:
+        out_path = write_dashboard(resolved.path, summary=summary, out_path=out, cdn=cdn)
+    except ChartError as exc:
+        err.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+    console.print(f"[green]Wrote[/green] {out_path}")
+    if open_browser:
+        import webbrowser
+
+        webbrowser.open(out_path.resolve().as_uri())
 
 
 @app.command()

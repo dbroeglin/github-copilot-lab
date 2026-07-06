@@ -18,6 +18,7 @@ jobs/
       copilot-experiments-run.json
       summary.json          # written by copilot-experiments
       summary.md            # written by copilot-experiments
+      summary.html          # written by copilot-experiments (chart / run)
       <trial-name>/
         config.json
         result.json
@@ -52,6 +53,7 @@ download. `copilot-experiments` adds `copilot-experiments-run.json` to preserve 
 | `agent/copilot-otel.jsonl` | Copilot OTel file-exporter output, captured by default for Copilot agent runs unless custom OTel destination settings override it. Useful for per-LLM-call spans with input/output/cache-write/nano-AIU details. |
 | `verifier/reward.txt` / `.json` | Pier verifier reward. Positive reward means solved. |
 | `summary.json` / `summary.md` | Derived agent/task aggregate summary. |
+| `summary.html` | Interactive Plotly dashboard derived from `summary.json` (see [Visualizing results](visualizing-results.md)). |
 
 Pier jobs do not persist per-trial `metrics.json` or `analysis.json` files. Those views are
 derived from `agent/copilot-session/**/events.jsonl` (or `agent/trajectory.json` as a fallback)
@@ -68,6 +70,21 @@ when `show`, `analyze`, or `inspect` runs.
 - one task aggregate per agent;
 - Copilot-native token/AIU/tool metrics when native events are available;
 - nullable fallback metrics for non-Copilot agents.
+
+### Variance and suite-coverage aggregates
+
+Each agent entry also carries spread and multi-trial coverage fields, used by the
+`summary.html` dashboard:
+
+| Field | Scope | Meaning |
+| --- | --- | --- |
+| `std_aiu` / `cv_aiu` | agent, task | Population standard deviation and coefficient of variation (`std / mean`) of AIU cost across trials. `null` when no AIU is available; `cv` is `null` when the mean is zero. |
+| `std_total_tokens` / `cv_total_tokens` | agent, task | Same spread measures for total token counts. |
+| `mean_resolved_rate` | agent | Macro-average of per-task `success_rate` (each task weighted equally, regardless of trial count). |
+| `resolved_at_k_rate` | agent | Fraction of tasks solved at least once across their `k` trials (each task's `resolved_rate` averaged). |
+| `resolved` / `resolved_rate` | task | Whether a task was solved at least once (`resolved_rate` is `1.0`/`0.0` per task) and, aggregated per agent, the resolved@k coverage. |
+
+Single-trial tasks report `std_* = 0.0` and `cv_* = 0.0`; empty inputs report `null`.
 
 ## Analyzing a trial
 
