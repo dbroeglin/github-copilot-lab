@@ -115,7 +115,7 @@ def summary_markdown(summary: dict, description: str = "") -> str:
         for agent in summary["agents"]:
             for task in agent.get("tasks", []):
                 lines.append(
-                    f"| {agent['name']} | {task['task_slug']} | {task['n_trials']} | "
+                    f"| {agent['name']} | {task['task']} | {task['n_trials']} | "
                     f"{_pct(task.get('success_rate'))} | {_pct(task.get('resolved_rate'))} | "
                     f"{_aiu(task.get('avg_aiu'))} |"
                 )
