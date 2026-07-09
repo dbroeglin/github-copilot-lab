@@ -120,6 +120,7 @@ uv run copilot-experiments analyze --root examples/tracer_bullet --last
 - [`docs/results-format.md`](docs/results-format.md) - Pier `jobs/` layout and derived summaries.
 - [`docs/visualizing-results.md`](docs/visualizing-results.md) - interactive `summary.html` dashboards.
 - [`docs/analysis.md`](docs/analysis.md) - native Copilot session analysis.
+- [`docs/diagnosing-agent-shutdowns.md`](docs/diagnosing-agent-shutdowns.md) - why a run "stops", the 600s timeout, and hang-vs-proxy triage.
 - [`docs/byok-and-local-models.md`](docs/byok-and-local-models.md) - provider env for Copilot CLI.
 - [`docs/adr/`](docs/adr) - architecture decision records.
 

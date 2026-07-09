@@ -306,7 +306,10 @@ Known limitations:
   runs when no explicit OTLP destination is configured.
 - Tool result size (`toolTelemetry.metrics.resultForLlmLength`) is a proxy for context injected
   back into the model, not an exact token count.
-- Aborted sessions may lack `session.shutdown`; keep raw CLI streams and partial events.
+- Aborted sessions may lack `session.shutdown`; keep raw CLI streams and partial events. For
+  reading a forced exit — the `waitForPendingBackgroundTasks` 600s ceiling, "orphaned tool calls",
+  and hang-vs-proxy triage — see
+  [Diagnosing agent shutdowns and timeouts](diagnosing-agent-shutdowns.md).
 - Opaque/encrypted reasoning fields are not human-readable by design.
 - Event names and payload shapes can change between Copilot CLI versions.
 
