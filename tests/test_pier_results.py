@@ -448,6 +448,52 @@ def test_write_pier_summary(tmp_path: Path):
     assert "Agent" in (job_dir / "summary.md").read_text(encoding="utf-8")
 
 
+def _make_multi_task_pier_job(job_dir: Path) -> Path:
+    _write_json(job_dir / "config.json", {"job_name": "demo-job"})
+    _write_json(
+        job_dir / "result.json",
+        {
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": "2026-01-01T00:00:05Z",
+            "stats": {"n_errored_trials": 0},
+        },
+    )
+    for task, reward in (("alpha", 1), ("beta", 0)):
+        trial = job_dir / f"copilot-cli__{task}__1"
+        _write_json(
+            trial / "result.json",
+            {
+                "trial_name": f"copilot-cli__{task}__1",
+                "task_name": task,
+                "started_at": "2026-01-01T00:00:00Z",
+                "finished_at": "2026-01-01T00:00:05Z",
+                "agent_info": {
+                    "name": "copilot-cli",
+                    "model_info": {"name": "gpt-5-mini"},
+                },
+                "config": {"agent": {"kwargs": {"reasoning_effort": "low"}}},
+                "verifier_result": {"rewards": {"reward": reward}},
+            },
+        )
+    return job_dir
+
+
+def test_write_pier_summary_renders_multi_task_table(tmp_path: Path):
+    # Regression: the per-task "Task suite coverage" table read task["task_slug"],
+    # but _aggregate_task stores the slug under "task", so multi-task summaries
+    # raised KeyError: 'task_slug' when rendering summary.md.
+    job_dir = _make_multi_task_pier_job(tmp_path / "jobs" / "demo-job" / "20260620-153000")
+
+    summary = write_pier_summary(job_dir)
+
+    assert summary["n_tasks"] == 2
+    markdown = (job_dir / "summary.md").read_text(encoding="utf-8")
+    assert "## Task suite coverage" in markdown
+    assert "| Agent | Task | Trials | Mean success | Resolved@k | Avg AIU |" in markdown
+    assert "| alpha |" in markdown
+    assert "| beta |" in markdown
+
+
 def _trial(success: bool | None, aiu: float | None, tokens: float | None, task: str = "t") -> dict:
     return {
         "success": success,
