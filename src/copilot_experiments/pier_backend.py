@@ -180,6 +180,9 @@ def _nearest_existing_ancestor(path: Path) -> Path:
     return Path(path.anchor) if path.anchor else Path(".")
 
 
+_TOKEN_ENV_KEYS: frozenset[str] = frozenset({"COPILOT_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"})
+
+
 def inject_copilot_token(config: Any, token: str) -> None:
     """Inject a GitHub token into local Copilot agents without persisting it to config."""
 
@@ -193,6 +196,38 @@ def inject_copilot_token(config: Any, token: str) -> None:
         agent.env.setdefault("COPILOT_GITHUB_TOKEN", token)
         agent.env.setdefault("GITHUB_TOKEN", token)
         agent.env.setdefault("GH_TOKEN", token)
+
+
+def sync_saved_run_config(config: Any) -> None:
+    """Overwrite the Copilot token env vars in ``config.json`` of an existing run dir.
+
+    Call this after ``inject_copilot_token`` and before ``run_pier_job`` when resuming.
+    Pier reads ``config.json`` on ``Job.create`` and raises ``FileExistsError`` when the
+    stored config differs from the one passed to it — most commonly because the auth token
+    has rotated between runs.  Patching only the token fields in the raw JSON preserves
+    all other config fields exactly as Pier wrote them, so the comparison always passes.
+    """
+    run_dir = Path(config.jobs_dir) / str(config.job_name)
+    config_path = run_dir / "config.json"
+    if not config_path.exists():
+        return
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+        # Update token env vars in-place in the raw dict so no secret-masking occurs.
+        for saved_agent, live_agent in zip(data.get("agents", []), config.agents, strict=False):
+            env: dict[str, str] = saved_agent.setdefault("env", {})
+            for key in _TOKEN_ENV_KEYS:
+                live_val = live_agent.env.get(key)
+                if live_val is not None:
+                    env[key] = live_val
+                else:
+                    env.pop(key, None)
+        config_path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
 
 
 def prepare_pier_job_for_run(
@@ -215,9 +250,8 @@ def prepare_pier_job_for_run(
     if resume:
         existing = _latest_existing_run_dir(prepared)
         if existing is not None:
-            prepared.jobs_dir = existing.parent
-            prepared.job_name = existing.name
-            return PreparedPierJob(prepared, requested_name, existing.name, resumed=True)
+            resumed_config = _config_for_resume(prepared, existing)
+            return PreparedPierJob(resumed_config, requested_name, existing.name, resumed=True)
 
     base_run_name = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
     run_name = base_run_name
@@ -252,6 +286,47 @@ def _resolve_path(path: Path, base: Path) -> Path:
 
 def _job_dir(config: Any) -> Path:
     return Path(config.jobs_dir) / str(config.job_name)
+
+
+def _config_for_resume(current_config: Any, run_dir: Path) -> Any:
+    """Reconstruct the Pier config from a saved run directory for resuming.
+
+    Pier's ``Job.create`` raises ``FileExistsError`` when the config passed to it
+    differs from the one stored in ``config.json``.  This helper rebuilds the config
+    from the saved file (so all structural fields match), then clears the token env
+    vars so that ``inject_copilot_token`` can inject fresh values.  Falls back to
+    the current in-memory config (pointing at the run dir) when the file cannot be
+    loaded or parsed.
+    """
+    config_path = run_dir / "config.json"
+    if config_path.exists():
+        try:
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+            loaded = type(current_config).model_validate(data)
+            _clear_copilot_token_env(loaded)
+            # Always anchor jobs_dir/job_name to the actual run directory — the saved
+            # values may be relative or point to a different machine layout.
+            loaded.jobs_dir = run_dir.parent
+            loaded.job_name = run_dir.name
+            return loaded
+        except Exception:
+            pass
+    current_config.jobs_dir = run_dir.parent
+    current_config.job_name = run_dir.name
+    return current_config
+
+
+def _clear_copilot_token_env(config: Any) -> None:
+    """Remove Copilot token env vars from agents so fresh values can be injected."""
+    for agent in config.agents:
+        is_copilot = (
+            agent.import_path == COPILOT_CLI_AGENT_IMPORT_PATH
+            or agent.name == COPILOT_CLI_AGENT_NAME
+        )
+        if not is_copilot:
+            continue
+        for key in _TOKEN_ENV_KEYS:
+            agent.env.pop(key, None)
 
 
 def _latest_existing_run_dir(config: Any) -> Path | None:

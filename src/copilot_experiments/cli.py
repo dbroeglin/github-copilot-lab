@@ -24,6 +24,7 @@ from .pier_backend import (
     preflight_pier_backend,
     prepare_pier_job_for_run,
     run_pier_job,
+    sync_saved_run_config,
 )
 from .pier_results import (
     describe_missing_pier_analysis_source,
@@ -253,6 +254,8 @@ def run(
         if verbose:
             prepared.config.debug = True
         inject_copilot_token(prepared.config, auth.token)
+        if prepared.resumed:
+            sync_saved_run_config(prepared.config)
         console.print(f"[bold]Running Pier job[/bold] {prepared.label}")
         if prepared.resumed:
             console.print(f"[dim]resume:[/dim] reusing existing Pier run {prepared.label}")

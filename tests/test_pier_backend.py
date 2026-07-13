@@ -19,6 +19,7 @@ from copilot_experiments.pier_backend import (
     load_pier_job_config,
     preflight_pier_backend,
     prepare_pier_job_for_run,
+    sync_saved_run_config,
 )
 
 
@@ -138,6 +139,80 @@ def test_prepare_pier_job_for_run_resume_uses_latest_nested_run(tmp_path: Path):
     assert prepared.config.jobs_dir == tmp_path / "jobs" / "smoke"
     assert prepared.config.job_name == "20260620-160000"
     assert prepared.resumed
+
+
+def test_prepare_pier_job_for_run_resume_loads_saved_config_and_clears_tokens(tmp_path: Path):
+    """Resume rebuilds config from config.json so Pier's equality check passes."""
+    import json
+
+    config_path = tmp_path / "job.yaml"
+    config_path.write_text(
+        "job_name: smoke\njobs_dir: jobs\nagents:\n  - name: copilot-cli\n",
+        encoding="utf-8",
+    )
+    config = load_pier_job_config(config_path, root=tmp_path)
+    run_dir = tmp_path / "jobs" / "smoke" / "20260620-160000"
+    run_dir.mkdir(parents=True)
+
+    # Simulate a previous run: inject a (now-stale) token and save config.json
+    inject_copilot_token(config, "old-token")
+    saved_config = config.model_copy(deep=True)
+    saved_config.jobs_dir = run_dir.parent
+    saved_config.job_name = run_dir.name
+    (run_dir / "config.json").write_text(
+        json.dumps(saved_config.model_dump(mode="json"), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (run_dir / "copilot-experiments-run.json").write_text("{}", encoding="utf-8")
+
+    # Load fresh config (token not yet injected) and resume
+    fresh_config = load_pier_job_config(config_path, root=tmp_path)
+    prepared = prepare_pier_job_for_run(fresh_config, resume=True)
+
+    assert prepared.resumed
+    assert prepared.run_name == "20260620-160000"
+    # Token env vars must be cleared so inject_copilot_token can set fresh values
+    copilot_agent = prepared.config.agents[0]
+    assert "COPILOT_GITHUB_TOKEN" not in copilot_agent.env
+    assert "GITHUB_TOKEN" not in copilot_agent.env
+    assert "GH_TOKEN" not in copilot_agent.env
+    # After injecting a new token it should be present
+    inject_copilot_token(prepared.config, "new-token")
+    assert copilot_agent.env["COPILOT_GITHUB_TOKEN"] == "new-token"
+
+
+def test_sync_saved_run_config_updates_config_json(tmp_path: Path):
+    """sync_saved_run_config overwrites config.json with the current in-memory config."""
+    import json
+
+    config_path = tmp_path / "job.yaml"
+    config_path.write_text(
+        "job_name: smoke\njobs_dir: jobs\nagents:\n  - name: copilot-cli\n",
+        encoding="utf-8",
+    )
+    config = load_pier_job_config(config_path, root=tmp_path)
+    run_dir = tmp_path / "jobs" / "smoke" / "20260620-160000"
+    run_dir.mkdir(parents=True)
+
+    # Write a stale config.json with an old token
+    config.jobs_dir = run_dir.parent
+    config.job_name = run_dir.name
+    inject_copilot_token(config, "old-token")
+    (run_dir / "config.json").write_text(
+        json.dumps(config.model_dump(mode="json"), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    # Update the in-memory token and sync to disk
+    config.agents[0].env["COPILOT_GITHUB_TOKEN"] = "new-token"
+    config.agents[0].env["GITHUB_TOKEN"] = "new-token"
+    config.agents[0].env["GH_TOKEN"] = "new-token"
+    sync_saved_run_config(config)
+
+    saved = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
+    agent_env = saved["agents"][0]["env"]
+    assert agent_env["COPILOT_GITHUB_TOKEN"] == "new-token"
+    assert agent_env["GITHUB_TOKEN"] == "new-token"
 
 
 def test_preflight_pier_backend_reports_missing_docker(
